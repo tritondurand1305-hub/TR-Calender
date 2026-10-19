@@ -3,13 +3,21 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: API for the Tumbler Ridge Community Calendar
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: Events
+    description: Public event discovery and protected event administration
+  - name: Submissions
+    description: Anonymous community event submissions and review
+  - name: Subscriptions
+    description: Optional confirmed community email subscriptions
+  - name: Storage
+    description: Private flyer and screenshot uploads
 paths:
   /healthz:
     get:
@@ -24,13 +32,882 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /events:
+    get:
+      operationId: listEvents
+      tags: [Events]
+      summary: Search published events
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema: { type: string, maxLength: 200 }
+        - name: category
+          in: query
+          required: false
+          schema: { $ref: "#/components/schemas/EventCategory" }
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+        - name: includeNotices
+          in: query
+          required: false
+          schema: { type: boolean, default: true }
+      responses:
+        "200":
+          description: Matching published events
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Event" }
+        "400":
+          description: Invalid search filters
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /events/{slug}:
+    get:
+      operationId: getEvent
+      tags: [Events]
+      summary: Get a published event by shareable slug
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Event details
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Event" }
+        "404":
+          description: Event not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /calendar/overview:
+    get:
+      operationId: getCalendarOverview
+      tags: [Events]
+      summary: Get event counts for the current week
+      parameters:
+        - name: weekOf
+          in: query
+          required: false
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: One-week event overview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WeeklyOverview" }
+  /submissions:
+    post:
+      operationId: createSubmission
+      tags: [Submissions]
+      summary: Submit an event or community announcement without an account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubmissionInput" }
+      responses:
+        "201":
+          description: Submission accepted for review
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SubmissionReceipt" }
+        "400":
+          description: Submission did not pass validation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "429":
+          description: Too many submissions
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /storage/uploads/request-url:
+    post:
+      operationId: requestUploadUrl
+      tags: [Storage]
+      summary: Request a private, temporary upload URL for an anonymous submission
+      description: File bytes are uploaded directly to private object storage. A short-lived one-use token binds the uploaded object to a later submission.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UploadUrlRequest" }
+      responses:
+        "200":
+          description: Upload URL and one-use claim token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UploadUrlResponse" }
+        "400":
+          description: Invalid file metadata or file type
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "429":
+          description: Upload rate limit exceeded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "503":
+          description: Private storage is not available
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /storage/uploads/complete:
+    post:
+      operationId: completeUpload
+      tags: [Storage]
+      summary: Validate an uploaded file before it can be attached to a submission
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UploadCompleteInput" }
+      responses:
+        "200":
+          description: Uploaded file validated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UploadCompleteResponse" }
+        "400":
+          description: Invalid, expired, or unsafe upload
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "429":
+          description: Upload rate limit exceeded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /subscriptions:
+    post:
+      operationId: createSubscription
+      tags: [Subscriptions]
+      summary: Request an optional email subscription
+      description: Creates an inactive subscription request and sends a confirmation only when a delivery provider is configured.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubscriptionInput" }
+      responses:
+        "202":
+          description: Request accepted without revealing prior subscription status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SubscriptionReceipt" }
+        "400":
+          description: Invalid email or consent preferences
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "429":
+          description: Too many subscription requests
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /subscriptions/confirm:
+    post:
+      operationId: confirmSubscription
+      tags: [Subscriptions]
+      summary: Confirm an email subscription with its one-use token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubscriptionTokenInput" }
+      responses:
+        "200":
+          description: Subscription confirmed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SubscriptionActionResult" }
+        "400":
+          description: Invalid, expired, or already used token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /subscriptions/manage:
+    post:
+      operationId: getSubscriptionPreferences
+      tags: [Subscriptions]
+      summary: Retrieve preferences using the private management token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubscriptionTokenInput" }
+      responses:
+        "200":
+          description: Subscription preferences without revealing the email address
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SubscriptionPreferences" }
+        "404":
+          description: Invalid or expired management token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    patch:
+      operationId: updateSubscriptionPreferences
+      tags: [Subscriptions]
+      summary: Update email categories using the private management token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubscriptionPreferencesInput" }
+      responses:
+        "200":
+          description: Preferences updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SubscriptionActionResult" }
+        "404":
+          description: Invalid or expired management token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /subscriptions/unsubscribe:
+    post:
+      operationId: unsubscribe
+      tags: [Subscriptions]
+      summary: Unsubscribe using the private management token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubscriptionTokenInput" }
+      responses:
+        "200":
+          description: Subscription suppressed immediately
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SubscriptionActionResult" }
+        "404":
+          description: Invalid or expired management token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /admin/status:
+    get:
+      operationId: getAdminStatus
+      tags: [Events]
+      summary: Check whether the signed-in user is configured as an administrator
+      responses:
+        "200":
+          description: Administrator and email-delivery setup status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminStatus" }
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /admin/events:
+    get:
+      operationId: listAdminEvents
+      tags: [Events]
+      summary: List all events for moderation
+      responses:
+        "200":
+          description: Event moderation list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Event" }
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "403":
+          description: Administrator access required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    post:
+      operationId: createEvent
+      tags: [Events]
+      summary: Create a calendar event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EventInput" }
+      responses:
+        "201":
+          description: Event created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Event" }
+        "400":
+          description: Invalid event
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "403":
+          description: Administrator access required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /admin/events/{id}:
+    patch:
+      operationId: updateEvent
+      tags: [Events]
+      summary: Update event details or status
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EventUpdate" }
+      responses:
+        "200":
+          description: Event updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Event" }
+        "400":
+          description: Invalid event update
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "404":
+          description: Event not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "403":
+          description: Administrator access required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    delete:
+      operationId: deleteEvent
+      tags: [Events]
+      summary: Remove an event listing
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Event removed }
+        "404":
+          description: Event not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "403":
+          description: Administrator access required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /admin/submissions:
+    get:
+      operationId: listSubmissions
+      tags: [Submissions]
+      summary: List pending and reviewed submissions
+      responses:
+        "200":
+          description: Submissions available to administrators
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Submission" }
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "403":
+          description: Administrator access required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /admin/submissions/{id}/approve:
+    post:
+      operationId: approveSubmission
+      tags: [Submissions]
+      summary: Approve a reviewed submission as a published event
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubmissionApprovalInput" }
+      responses:
+        "201":
+          description: Event published from submission
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Event" }
+        "400":
+          description: Submission is not approvable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "404":
+          description: Submission not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "403":
+          description: Administrator access required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /admin/submissions/{id}:
+    patch:
+      operationId: updateSubmissionStatus
+      tags: [Submissions]
+      summary: Reject or remove a submission from the review queue
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubmissionStatusInput" }
+      responses:
+        "200":
+          description: Submission status updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Submission" }
+        "404":
+          description: Submission not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "403":
+          description: Administrator access required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /admin/submissions/{id}/attachments/{attachmentId}:
+    get:
+      operationId: getPrivateSubmissionAttachment
+      tags: [Submissions]
+      summary: View a pending submission attachment after administrator authorization
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: attachmentId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Private attachment
+          content:
+            "*/*":
+              schema: { type: string, format: binary }
+        "404":
+          description: Attachment not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "403":
+          description: Administrator access required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /admin/email/status:
+    get:
+      operationId: getEmailDeliveryStatus
+      tags: [Subscriptions]
+      summary: Check email delivery configuration
+      responses:
+        "200":
+          description: Provider status; never indicates unconfigured email was delivered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmailDeliveryStatus" }
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "403":
+          description: Administrator access required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+  /admin/digest/preview:
+    get:
+      operationId: getWeeklyDigestPreview
+      tags: [Subscriptions]
+      summary: Preview upcoming published events for the weekly digest
+      parameters:
+        - name: weekOf
+          in: query
+          required: false
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Digest preview in America/Vancouver time
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DigestPreview" }
+        "401":
+          description: Sign-in required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "403":
+          description: Administrator access required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
 components:
   schemas:
     HealthStatus:
       type: object
       properties:
-        status:
-          type: string
-      required:
-        - status
-
+        status: { type: string }
+      required: [status]
+    EventCategory:
+      type: string
+      enum:
+        - Community Events
+        - Families & Youth
+        - Sports & Recreation
+        - Seniors & Services
+        - Community Notices
+    EventStatus:
+      type: string
+      enum: [draft, pending, published, cancelled, rejected]
+    SubmissionStatus:
+      type: string
+      enum: [pending, approved, rejected, removed]
+    Event:
+      type: object
+      required: [id, slug, title, category, startAt, allDay, status, isDemo, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        title: { type: string }
+        summary: { type: ["string", "null"] }
+        description: { type: ["string", "null"] }
+        category: { $ref: "#/components/schemas/EventCategory" }
+        startAt: { type: string, format: date-time }
+        endAt: { type: ["string", "null"], format: date-time }
+        allDay: { type: boolean }
+        location: { type: ["string", "null"] }
+        sourceUrl: { type: ["string", "null"], format: uri }
+        organizer: { type: ["string", "null"] }
+        contact: { type: ["string", "null"] }
+        cost: { type: ["string", "null"] }
+        registrationUrl: { type: ["string", "null"], format: uri }
+        tags:
+          type: array
+          items: { type: string }
+        status: { $ref: "#/components/schemas/EventStatus" }
+        isDemo: { type: boolean }
+        lastVerifiedAt: { type: ["string", "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    EventInput:
+      type: object
+      required: [title, category, startAt, allDay]
+      properties:
+        title: { type: string, minLength: 3, maxLength: 160 }
+        summary: { type: ["string", "null"], maxLength: 280 }
+        description: { type: ["string", "null"], maxLength: 5000 }
+        category: { $ref: "#/components/schemas/EventCategory" }
+        startAt: { type: string, format: date-time }
+        endAt: { type: ["string", "null"], format: date-time }
+        allDay: { type: boolean }
+        location: { type: ["string", "null"], maxLength: 200 }
+        sourceUrl: { type: ["string", "null"], format: uri }
+        organizer: { type: ["string", "null"], maxLength: 160 }
+        contact: { type: ["string", "null"], maxLength: 200 }
+        cost: { type: ["string", "null"], maxLength: 160 }
+        registrationUrl: { type: ["string", "null"], format: uri }
+        tags:
+          type: array
+          items: { type: string, maxLength: 40 }
+        status: { $ref: "#/components/schemas/EventStatus" }
+        isDemo: { type: boolean, default: false }
+        lastVerifiedAt: { type: ["string", "null"], format: date-time }
+    EventUpdate:
+      allOf:
+        - $ref: "#/components/schemas/EventInput"
+    WeeklyDay:
+      type: object
+      required: [date, eventCount]
+      properties:
+        date: { type: string, format: date }
+        eventCount: { type: integer, minimum: 0 }
+    WeeklyOverview:
+      type: object
+      required: [weekStart, weekEnd, days]
+      properties:
+        weekStart: { type: string, format: date }
+        weekEnd: { type: string, format: date }
+        days:
+          type: array
+          items: { $ref: "#/components/schemas/WeeklyDay" }
+    SubmissionInput:
+      type: object
+      properties:
+        title: { type: ["string", "null"], maxLength: 160 }
+        category: { $ref: "#/components/schemas/EventCategory" }
+        startAt: { type: ["string", "null"], format: date-time }
+        endAt: { type: ["string", "null"], format: date-time }
+        allDay: { type: boolean, default: false }
+        location: { type: ["string", "null"], maxLength: 200 }
+        details: { type: ["string", "null"], maxLength: 5000 }
+        sourceUrl: { type: ["string", "null"], format: uri }
+        organizer: { type: ["string", "null"], maxLength: 160 }
+        followUpEmail: { type: ["string", "null"], format: email, maxLength: 254 }
+        attachmentClaims:
+          type: array
+          maxItems: 3
+          items: { $ref: "#/components/schemas/UploadClaim" }
+        website:
+          type: ["string", "null"]
+          maxLength: 200
+          description: Honeypot field; must be empty.
+      required: []
+    SubmissionReceipt:
+      type: object
+      required: [reference, status, duplicatePotential, message]
+      properties:
+        reference: { type: string }
+        status: { $ref: "#/components/schemas/SubmissionStatus" }
+        duplicatePotential: { type: boolean }
+        message: { type: string }
+    Submission:
+      type: object
+      required: [id, reference, status, createdAt, attachmentCount, attachments]
+      properties:
+        id: { type: string, format: uuid }
+        reference: { type: string }
+        title: { type: ["string", "null"] }
+        category: { oneOf: [{ $ref: "#/components/schemas/EventCategory" }, { type: "null" }] }
+        startAt: { type: ["string", "null"], format: date-time }
+        endAt: { type: ["string", "null"], format: date-time }
+        allDay: { type: boolean }
+        location: { type: ["string", "null"] }
+        details: { type: ["string", "null"] }
+        sourceUrl: { type: ["string", "null"], format: uri }
+        organizer: { type: ["string", "null"] }
+        followUpEmail: { type: ["string", "null"], format: email }
+        status: { $ref: "#/components/schemas/SubmissionStatus" }
+        createdAt: { type: string, format: date-time }
+        attachmentCount: { type: integer, minimum: 0 }
+        duplicatePotential: { type: boolean }
+        attachments:
+          type: array
+          items: { $ref: "#/components/schemas/SubmissionAttachment" }
+    SubmissionAttachment:
+      type: object
+      required: [id, name, contentType, size]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        contentType: { type: string, enum: [image/jpeg, image/png, image/webp, application/pdf] }
+        size: { type: integer, minimum: 1 }
+    SubmissionApprovalInput:
+      type: object
+      required: [title, category, startAt, allDay]
+      properties:
+        title: { type: string, minLength: 3, maxLength: 160 }
+        summary: { type: ["string", "null"], maxLength: 280 }
+        description: { type: ["string", "null"], maxLength: 5000 }
+        category: { $ref: "#/components/schemas/EventCategory" }
+        startAt: { type: string, format: date-time }
+        endAt: { type: ["string", "null"], format: date-time }
+        allDay: { type: boolean }
+        location: { type: ["string", "null"], maxLength: 200 }
+        sourceUrl: { type: ["string", "null"], format: uri }
+        organizer: { type: ["string", "null"], maxLength: 160 }
+        contact: { type: ["string", "null"], maxLength: 200 }
+        cost: { type: ["string", "null"], maxLength: 160 }
+        registrationUrl: { type: ["string", "null"], format: uri }
+        tags:
+          type: array
+          items: { type: string, maxLength: 40 }
+        lastVerifiedAt: { type: ["string", "null"], format: date-time }
+    SubmissionStatusInput:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [rejected, removed] }
+    UploadUrlRequest:
+      type: object
+      required: [name, size, contentType]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 180 }
+        size: { type: integer, minimum: 1, maximum: 8388608 }
+        contentType: { type: string, enum: [image/jpeg, image/png, image/webp, application/pdf] }
+        website: { type: string, maxLength: 200, description: Honeypot field; must be empty. }
+    UploadUrlResponse:
+      type: object
+      required: [uploadId, claimToken, uploadURL, objectPath, expiresAt]
+      properties:
+        uploadId: { type: string, format: uuid }
+        claimToken: { type: string, minLength: 32 }
+        uploadURL: { type: string, format: uri }
+        objectPath: { type: string }
+        expiresAt: { type: string, format: date-time }
+    UploadCompleteInput:
+      type: object
+      required: [uploadId, claimToken]
+      properties:
+        uploadId: { type: string, format: uuid }
+        claimToken: { type: string, minLength: 32 }
+    UploadCompleteResponse:
+      type: object
+      required: [uploadId, name, size, contentType, claimToken]
+      properties:
+        uploadId: { type: string, format: uuid }
+        name: { type: string }
+        size: { type: integer }
+        contentType: { type: string, enum: [image/jpeg, image/png, image/webp, application/pdf] }
+        claimToken: { type: string }
+    UploadClaim:
+      type: object
+      required: [uploadId, claimToken]
+      properties:
+        uploadId: { type: string, format: uuid }
+        claimToken: { type: string, minLength: 32 }
+    SubscriptionInput:
+      type: object
+      required: [email, weeklyDigest, sportsRecreation, familyYouth, consent]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        weeklyDigest: { type: boolean, default: true }
+        sportsRecreation: { type: boolean, default: false }
+        familyYouth: { type: boolean, default: false }
+        consent: { type: boolean, enum: [true] }
+    SubscriptionReceipt:
+      type: object
+      required: [accepted, deliveryConfigured, message]
+      properties:
+        accepted: { type: boolean }
+        deliveryConfigured: { type: boolean }
+        message: { type: string }
+    SubscriptionTokenInput:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string, minLength: 32, maxLength: 256 }
+    SubscriptionPreferencesInput:
+      allOf:
+        - $ref: "#/components/schemas/SubscriptionTokenInput"
+        - type: object
+          required: [weeklyDigest, sportsRecreation, familyYouth]
+          properties:
+            weeklyDigest: { type: boolean }
+            sportsRecreation: { type: boolean }
+            familyYouth: { type: boolean }
+    SubscriptionPreferences:
+      type: object
+      required: [weeklyDigest, sportsRecreation, familyYouth, confirmed, unsubscribed]
+      properties:
+        weeklyDigest: { type: boolean }
+        sportsRecreation: { type: boolean }
+        familyYouth: { type: boolean }
+        confirmed: { type: boolean }
+        unsubscribed: { type: boolean }
+    SubscriptionActionResult:
+      type: object
+      required: [success, message]
+      properties:
+        success: { type: boolean }
+        message: { type: string }
+    AdminStatus:
+      type: object
+      required: [isAdmin, emailDeliveryConfigured, adminSetupRequired]
+      properties:
+        isAdmin: { type: boolean }
+        emailDeliveryConfigured: { type: boolean }
+        adminSetupRequired: { type: boolean }
+    EmailDeliveryStatus:
+      type: object
+      required: [configured, provider, automaticSendingEnabled, timezone, message]
+      properties:
+        configured: { type: boolean }
+        provider: { type: ["string", "null"] }
+        automaticSendingEnabled: { type: boolean }
+        timezone: { type: string, enum: [America/Vancouver] }
+        message: { type: string }
+    DigestPreview:
+      type: object
+      required: [weekStart, weekEnd, timezone, events, deliveryConfigured]
+      properties:
+        weekStart: { type: string, format: date }
+        weekEnd: { type: string, format: date }
+        timezone: { type: string, enum: [America/Vancouver] }
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/Event" }
+        deliveryConfigured: { type: boolean }
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
