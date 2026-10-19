@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Tumbler Ridge Community Calendar"
+description = "A community calendar for Tumbler Ridge residents to discover local events and notices, submit listings, and optionally subscribe to community email updates."
+version = "1.0.0"
+id = "artifacts/tumbler-ridge-calendar"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24879
+
+[services.development]
+run = "pnpm --filter @workspace/tumbler-ridge-calendar run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/tumbler-ridge-calendar", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/tumbler-ridge-calendar/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24879"
+BASE_PATH = "/"

@@ -1,0 +1,111 @@
+# Feature Request: Optional Email Subscriptions
+
+Add an optional email subscription feature to the Tumbler Ridge Community Calendar.
+
+## 1. Core requirements
+
+- Visitors can browse the calendar, search events, view event details, and submit community announcements without creating an account.
+- Email subscriptions are entirely optional and must not block access to any calendar feature.
+- Provide a clearly labelled **“Get Community Updates by Email”** section.
+- Make the signup form mobile-friendly, lightweight, and easy for less tech-savvy residents to use.
+
+## 2. Signup preferences
+
+Include these preferences, with the following defaults:
+
+- **Weekly community digest:** Enabled by default.
+- **Sports and recreation:** Disabled by default.
+- **Family and youth:** Disabled by default.
+
+Users must be able to change their selections before submitting. Explain briefly what each category includes.
+
+Do not interpret a preselected checkbox as consent to receive email. The user must actively submit the form, and the subscription must be confirmed by email.
+
+## 3. Consent and confirmation
+
+Implement a proper double opt-in process:
+
+1. The visitor enters their email address and selects their preferred updates.
+2. Show a clear consent statement explaining what emails they will receive and how they can unsubscribe.
+3. Send a confirmation email to the supplied address.
+4. Keep the subscription inactive until the recipient clicks the confirmation link.
+5. Use a cryptographically secure, single-use confirmation token with an expiration time. Store a hash of the token rather than the raw token.
+6. Show a confirmation page after successful activation.
+7. Do not send newsletters or digests to unconfirmed addresses.
+
+Avoid revealing whether an email address is already subscribed. Add reasonable rate limits and protections against automated submissions.
+
+## 4. Secure storage and privacy
+
+Store subscriber records in the application's persistent database, not in browser storage or a temporary in-memory list.
+
+Store only the information needed to operate the subscription service, such as:
+- Email address.
+- Selected categories and digest preference.
+- Confirmation status and relevant timestamps.
+- Consent and subscription status.
+- Unsubscribe status and token hashes as required.
+
+Apply appropriate access controls. Never expose subscriber email addresses through public API endpoints, calendar pages, client-side code, logs, or the admin interface to unauthorized users.
+
+Keep email delivery credentials and signing secrets in server-side environment variables. Never commit secrets to GitHub.
+
+Do not collect a subscriber's name, phone number, or other personal information unless a later feature genuinely requires it.
+
+## 5. Unsubscribe and preference management
+
+- Include a clearly visible unsubscribe link in every subscription email.
+- Provide a secure, straightforward way to unsubscribe without creating an account or signing in.
+- Support changing category preferences and the weekly digest setting.
+- Make unsubscribe links secure and difficult to guess. Avoid putting email addresses or other personal information in URLs.
+- Make unsubscribe actions effective promptly and ensure unsubscribed users are excluded from all future campaigns.
+- Prevent unsubscribe tokens from being reused to modify another person's subscription.
+- Provide a clear confirmation after a successful unsubscribe.
+
+## 6. Canadian anti-spam compliance
+
+Design the feature to support compliance with Canada's Anti-Spam Legislation (CASL).
+
+- Obtain express consent before sending recurring commercial electronic messages, and retain evidence of when and how consent was obtained.
+- Clearly identify the sender and provide valid contact information in subscription emails.
+- Include a functioning unsubscribe mechanism in every applicable message.
+- Process unsubscribe requests within the legally required timeframe and stop sending messages within that period; aim to suppress future sends immediately.
+- Do not add people to the list based on their participation in a Facebook group, submission of an event, or use of the calendar.
+- Keep subscription consent separate from consent to publish an event or respond to a submission.
+- Review the final implementation against current CASL requirements before launch, including whether particular community messages qualify as commercial electronic messages.
+
+## 7. Email delivery and weekly digest
+
+Build a replaceable server-side email delivery interface so the application can use an affordable provider later without rewriting the subscription system.
+
+For the first version:
+- Implement the signup, confirmation, preferences, and unsubscribe workflows.
+- Add a weekly digest generator that selects upcoming, published events within the chosen categories.
+- Do not send emails automatically until a real email provider is configured and tested.
+- If delivery is not configured, display a clear setup status to administrators rather than pretending emails have been sent.
+- Prevent duplicate sends and record enough delivery status to diagnose failures without logging message secrets or unnecessary personal data.
+- Make the sending schedule configurable, with the timezone set to `America/Vancouver`.
+
+## 8. Integration with the existing calendar
+
+Use the existing event database and category system where possible. Do not create a separate event database for email.
+
+Only include published, upcoming events. Exclude drafts, rejected submissions, and expired events. Link each digest item to its public event page.
+
+Keep the feature modular so future updates can add event-specific alerts, including short-notice sports cancellations, without requiring a rewrite of the weekly digest system. Event-specific alerts must respect category preferences and consent.
+
+## 9. Testing and acceptance criteria
+
+Verify that:
+- Browsing and submitting events still work without an account.
+- The three signup preferences use the specified defaults.
+- Unconfirmed addresses receive no digest.
+- Confirmation tokens expire and cannot be reused.
+- Unsubscribe links work without login and prevent further sends.
+- Category preferences correctly filter digest content.
+- Subscriber information is protected from unauthorized access.
+- Email-provider failures do not mark messages as successfully delivered.
+- No real emails are sent during development unless explicitly configured for testing.
+- Database migrations, environment variables, setup instructions, and tests are included in the repository README.
+
+Inspect the existing project first and adapt to its actual framework, database, and deployment setup. Keep changes focused; do not rebuild unrelated calendar features. Document any provider, hosting, or compliance decisions that still require configuration before launch.
