@@ -349,10 +349,9 @@ export async function seedDemoEvents(): Promise<void> {
     return;
   }
 
-  const now = new Date();
-  const monday = new Date(now);
-  monday.setUTCDate(monday.getUTCDate() + ((8 - monday.getUTCDay()) % 7));
-  monday.setUTCHours(18, 0, 0, 0);
+  const tomorrow = new Date();
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  tomorrow.setUTCHours(19, 0, 0, 0);
   const addDays = (base: Date, days: number, hours: number) => {
     const date = new Date(base);
     date.setUTCDate(date.getUTCDate() + days);
@@ -368,7 +367,7 @@ export async function seedDemoEvents(): Promise<void> {
       description:
         "Sample content for the proof of concept only. This is not a real community event; confirm details with an organizer before sharing.",
       category: "Community Events",
-      startAt: monday,
+      startAt: tomorrow,
       allDay: false,
       location: "Sample venue — confirm with organizer",
       sourceUrl: null,
@@ -382,7 +381,7 @@ export async function seedDemoEvents(): Promise<void> {
       description:
         "Sample content for the proof of concept only. This is not a real community event; confirm details with an organizer before sharing.",
       category: "Families & Youth",
-      startAt: addDays(monday, 2, 23),
+      startAt: addDays(tomorrow, 2, 23),
       allDay: false,
       location: "Sample venue — confirm with organizer",
       sourceUrl: null,
@@ -396,7 +395,7 @@ export async function seedDemoEvents(): Promise<void> {
       description:
         "Sample content for the proof of concept only. It is not an official notice or confirmed program.",
       category: "Community Notices",
-      startAt: addDays(monday, 4, 19),
+      startAt: addDays(tomorrow, 4, 19),
       allDay: true,
       location: "Sample facility",
       sourceUrl: null,

@@ -17,7 +17,7 @@ import {
   getListAdminEventsQueryKey, getListSubmissionsQueryKey, getGetEmailDeliveryStatusQueryKey,
   getGetWeeklyDigestPreviewQueryKey,
 } from '@workspace/api-client-react';
-import type { Event, EventInput, EventUpdate, EventCategory as EventCategoryType, UploadClaim } from '@workspace/api-client-react';
+import type { Event, EventInput, EventUpdate, EventCategory as EventCategoryType, ListSubmissionsQueryResult, UploadClaim } from '@workspace/api-client-react';
 
 const queryClient = new QueryClient();
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
@@ -76,6 +76,7 @@ const categoryShort: Record<string, string> = {
 const communityTimeZone = 'America/Vancouver';
 const vancouverDateString = (value: Date | string) => new Intl.DateTimeFormat('en-CA', { timeZone: communityTimeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(value));
 const dateFmt = (value?: string | null, options?: Intl.DateTimeFormatOptions) => value ? new Intl.DateTimeFormat('en-CA', { timeZone: communityTimeZone, weekday: 'short', month: 'long', day: 'numeric', ...options }).format(new Date(value)) : 'Date to be announced';
+const dateOnlyFmt = (value: string) => new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC', weekday: 'short', month: 'long', day: 'numeric' }).format(new Date(`${value.slice(0, 10)}T12:00:00Z`));
 const timeFmt = (value?: string | null) => value ? new Intl.DateTimeFormat('en-CA', { timeZone: communityTimeZone, hour: 'numeric', minute: '2-digit' }).format(new Date(value)) : '';
 const vancouverMidnight = (dateOnly: string) => {
   const [year, month, day] = dateOnly.split('-').map(Number);
@@ -85,6 +86,16 @@ const vancouverMidnight = (dateOnly: string) => {
   const values = Object.fromEntries(parts.map(part => [part.type, Number(part.value)]));
   const offset = Date.UTC(values.year, values.month - 1, values.day, values.hour, values.minute, values.second) - wallClock;
   return new Date(wallClock - offset);
+};
+const addCalendarDays = (dateOnly: string, days: number) => {
+  const date = new Date(`${dateOnly}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+const mondayFor = (dateOnly: string) => {
+  const date = new Date(`${dateOnly}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
+  return date.toISOString().slice(0, 10);
 };
 const localInputDate = (iso?: string | null) => {
   if (!iso) return '';
@@ -136,8 +147,11 @@ function Empty({ title, text }: { title: string; text: string }) {
 }
 function EventCard({ event }: { event: Event }) {
   const date = event.startAt ? new Date(event.startAt) : null;
+  const dateParts = date ? new Intl.DateTimeFormat('en-CA', { timeZone: communityTimeZone, month: 'short', day: 'numeric' }).formatToParts(date) : [];
+  const month = dateParts.find(part => part.type === 'month')?.value;
+  const dayNumber = dateParts.find(part => part.type === 'day')?.value;
   return <Link href={`/events/${event.slug}`} className="event-card" data-testid={`card-event-${event.id}`}>
-    <div className="date-block"><span>{date ? date.toLocaleDateString('en-CA', { month: 'short' }) : 'TBA'}</span><b>{date ? date.getDate() : '—'}</b></div>
+    <div className="date-block"><span>{month || 'TBA'}</span><b>{dayNumber || '—'}</b></div>
     <div style={{ flex: 1 }}><span className="tag">{categoryShort[event.category] || event.category}</span><h3>{event.title}</h3><p>{event.summary || event.description || 'More details from the organizer.'}</p><div className="event-meta">{event.allDay ? <CalendarDays size={14} /> : <Clock3 size={14} />}{event.allDay ? 'All day' : timeFmt(event.startAt)}{event.location && <><span>·</span><MapPin size={14} />{event.location}</>}</div>{event.isDemo && <div className="hint" style={{ marginTop: 8 }}>Demonstration data</div>}</div><ArrowRight size={17} style={{ color: '#6c7a72', flexShrink: 0, marginTop: 4 }} />
   </Link>;
 }
@@ -152,12 +166,11 @@ function HomePage() {
   const health = useHealthCheck();
   const [category, setCategory] = useState('');
   const [search, setSearch] = useState('');
-  const [weekOf, setWeekOf] = useState(new Date().toISOString().slice(0, 10));
+  const [weekOf, setWeekOf] = useState(() => vancouverDateString(new Date()));
   const params = useMemo(() => {
-    const selected = new Date(`${weekOf}T12:00:00`);
-    selected.setDate(selected.getDate() - selected.getDay());
-    const from = new Date(selected); from.setHours(0, 0, 0, 0);
-    const to = new Date(from); to.setDate(from.getDate() + 7);
+    const monday = mondayFor(weekOf);
+    const from = vancouverMidnight(monday);
+    const to = vancouverMidnight(addCalendarDays(monday, 7));
     return { ...(category ? { category: category as EventCategoryType } : {}), ...(search.trim() ? { q: search.trim() } : {}), from: from.toISOString(), to: to.toISOString(), includeNotices: true };
   }, [category, search, weekOf]);
   const events = useListEvents(params);
@@ -168,7 +181,7 @@ function HomePage() {
     <section className="hero reveal"><div className="landscape" aria-hidden="true"><div className="ridge back" /><div className="ridge" /><div className="ridge front" /></div><div className="hero-copy"><div className="eyebrow">Your town, in the know</div><h1>Good things<br />happen here.</h1><p>A shared calendar for Tumbler Ridge—local events, useful notices, and the people bringing us together.</p><Link className="btn light" href="/calendar">Explore the calendar <ArrowRight size={16} /></Link></div></section>
     <div className="section-heading" style={{ marginTop: 36 }}><div><div className="eyebrow">Around the community</div><h2>Coming up</h2></div><Link href="/calendar" className="btn secondary small">Full calendar <ArrowRight size={15} /></Link></div>
     <div className="filterbar" role="search"><label style={{ position: 'relative', flex: '1 1 220px' }}><Search size={17} style={{ position: 'absolute', left: 13, top: 13, color: '#69766f' }} /><input aria-label="Search events" placeholder="Search events and activities" value={search} onChange={e => setSearch(e.target.value)} data-testid="input-event-search" style={{ paddingLeft: 40, width: '100%' }} /></label><select aria-label="Filter by category" value={category} onChange={e => setCategory(e.target.value)} data-testid="select-event-category"><option value="">All community events</option>{categories.map(item => <option key={item} value={item}>{item}</option>)}</select></div>
-    <div className="filterbar" aria-label="Weekly event overview">{days.map(day => <button key={day.date} className={`pill ${day.date === weekOf ? 'selected' : ''}`} onClick={() => setWeekOf(day.date)} data-testid={`button-weekday-${day.date}`}>{new Date(day.date + 'T12:00:00').toLocaleDateString('en-CA', { weekday: 'short', day: 'numeric' })}<span style={{ opacity: .75 }}> · {day.eventCount}</span></button>)}{week.isLoading && <span className="hint">Loading week…</span>}{week.isError && <button className="pill" onClick={() => week.refetch()}>Week unavailable · retry</button>}</div>
+    <div className="filterbar" aria-label="Weekly event overview">{days.map(day => <button key={day.date} className={`pill ${day.date === weekOf ? 'selected' : ''}`} onClick={() => setWeekOf(day.date)} data-testid={`button-weekday-${day.date}`}>{new Date(day.date + 'T12:00:00Z').toLocaleDateString('en-CA', { timeZone: communityTimeZone, weekday: 'short', day: 'numeric' })}<span style={{ opacity: .75 }}> · {day.eventCount}</span></button>)}{week.isLoading && <span className="hint">Loading week…</span>}{week.isError && <button className="pill" onClick={() => week.refetch()}>Week unavailable · retry</button>}</div>
     <EventList events={events.data} loading={events.isLoading} error={events.error} retry={() => events.refetch()} />
     <section className="section"><div className="section-heading"><div><div className="eyebrow">A note from around town</div><h2>Community notices</h2></div><Link className="btn secondary small" href="/notices">See notices</Link></div>
       {notices.isLoading ? <div className="skeleton" style={{ height: 100 }} /> : notices.error ? <LoadError error={notices.error} retry={() => notices.refetch()} /> : notices.data?.length ? notices.data.slice(0, 2).map(item => <Link key={item.id} href={`/events/${item.slug}`} style={{ textDecoration: 'none', color: 'inherit' }}><div className="notice-box" style={{ marginBottom: 12 }}><Megaphone size={22} color="#9a6a2e" /><div><h3>{item.title}{item.isDemo && <span className="tag" style={{ marginLeft: 9 }}>Demo</span>}</h3><p>{item.summary || item.description || 'Open this notice for details.'}</p><div className="event-meta">{dateFmt(item.startAt)}{item.location && ` · ${item.location}`}</div></div></div></Link>) : <Empty title="No current notices" text="When something needs sharing, you’ll find it here." />}
@@ -181,32 +194,46 @@ function HomePage() {
 function CalendarPage() {
   const [view, setView] = useState<'month' | 'week' | 'upcoming'>('upcoming');
   const [anchor, setAnchor] = useState(new Date());
+  const anchorDay = vancouverDateString(anchor);
+  const anchorDate = new Date(`${anchorDay}T12:00:00Z`);
   const range = useMemo(() => {
     if (view === 'week') {
-      const start = new Date(anchor);
-      start.setDate(anchor.getDate() - anchor.getDay());
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(start);
-      end.setDate(start.getDate() + 7);
+      const monday = mondayFor(anchorDay);
+      const start = vancouverMidnight(monday);
+      const end = vancouverMidnight(addCalendarDays(monday, 7));
       return { from: start.toISOString(), to: end.toISOString() };
     }
-    const start = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
-    const end = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1);
+    const year = anchorDate.getUTCFullYear();
+    const month = anchorDate.getUTCMonth();
+    const firstOfMonth = new Date(Date.UTC(year, month, 1, 12)).toISOString().slice(0, 10);
+    const firstOfNextMonth = new Date(Date.UTC(year, month + 1, 1, 12)).toISOString().slice(0, 10);
+    const start = vancouverMidnight(firstOfMonth);
+    const end = vancouverMidnight(firstOfNextMonth);
     return { from: start.toISOString(), to: end.toISOString() };
-  }, [anchor, view]);
+  }, [anchorDay, anchorDate, view]);
   const events = useListEvents(view === 'upcoming' ? { includeNotices: true } : { ...range, includeNotices: true });
-  const week = useGetCalendarOverview({ weekOf: anchor.toISOString().slice(0, 10) });
-  const changeMonth = (delta: number) => setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() + delta, 1));
+  const week = useGetCalendarOverview({ weekOf: anchorDay });
+  const changePeriod = (delta: number) => {
+    if (view === 'week') {
+      const next = new Date(anchorDate);
+      next.setUTCDate(next.getUTCDate() + delta * 7);
+      setAnchor(next);
+    } else {
+      setAnchor(new Date(Date.UTC(anchorDate.getUTCFullYear(), anchorDate.getUTCMonth() + delta, 15, 12)));
+    }
+  };
   const monthGrid = useMemo(() => {
-    const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
-    const start = new Date(first); start.setDate(first.getDate() - first.getDay());
-    return Array.from({ length: 42 }, (_, i) => { const d = new Date(start); d.setDate(start.getDate() + i); return d; });
-  }, [anchor]);
-  return <Shell><main className="page section"><div className="eyebrow">Make a little room for it</div><div className="section-heading"><h1 className="serif" style={{ fontSize: 54, fontWeight: 400, margin: '10px 0 0' }}>Community calendar</h1><Link href="/submit" className="btn small">Add an event <ArrowRight size={15} /></Link></div>
+    const first = new Date(Date.UTC(anchorDate.getUTCFullYear(), anchorDate.getUTCMonth(), 1, 12));
+    const start = new Date(first);
+    start.setUTCDate(first.getUTCDate() - first.getUTCDay());
+    return Array.from({ length: 42 }, (_, i) => { const d = new Date(start); d.setUTCDate(start.getUTCDate() + i); return d; });
+  }, [anchorDate]);
+  const monthLabel = new Intl.DateTimeFormat('en-CA', { timeZone: communityTimeZone, month: 'long', year: 'numeric' }).format(anchorDate);
+  return <Shell><main className="page section calendar-page"><div className="eyebrow">Make a little room for it</div><div className="section-heading"><h1 className="serif" style={{ fontSize: 54, fontWeight: 400, margin: '10px 0 0' }}>Community calendar</h1><Link href="/submit" className="btn small">Add an event <ArrowRight size={15} /></Link></div>
     <div className="tabs" aria-label="Calendar view">{(['upcoming', 'week', 'month'] as const).map(item => <button key={item} className={view === item ? 'selected' : ''} onClick={() => setView(item)} data-testid={`tab-calendar-${item}`}>{item === 'upcoming' ? 'Upcoming' : item[0].toUpperCase() + item.slice(1)}</button>)}</div>
-    <div className="section-heading"><div><h2 style={{ margin: 0 }}>{view === 'week' ? 'This week' : view === 'upcoming' ? 'What’s coming up' : anchor.toLocaleDateString('en-CA', { month: 'long', year: 'numeric' })}</h2><p className="hint" style={{ margin: '8px 0 0' }}>{view === 'week' && week.data ? `${dateFmt(week.data.weekStart)} – ${dateFmt(week.data.weekEnd)}` : 'All times shown in local time.'}</p></div>{view !== 'upcoming' && <div style={{ display: 'flex', gap: 8 }}><button className="btn secondary small" onClick={() => changeMonth(-1)} aria-label="Previous month"><ChevronLeft size={17} /></button><button className="btn secondary small" onClick={() => changeMonth(1)} aria-label="Next month"><ChevronRight size={17} /></button></div>}</div>
-    {view === 'month' && !events.isLoading && !events.error && <div className="calendar-grid">{['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => <div key={d} className="calendar-cell" style={{ minHeight: 35, background: '#e8e5dd', fontWeight: 700 }}>{d}</div>)}{monthGrid.map((d, i) => { const sameMonth = d.getMonth() === anchor.getMonth(); const dayEvents = events.data?.filter(event => event.startAt && new Date(event.startAt).toDateString() === d.toDateString()) || []; return <div key={i} className="calendar-cell" style={{ opacity: sameMonth ? 1 : .48 }}><strong>{d.getDate()}</strong>{dayEvents.map(event => <Link key={event.id} href={`/events/${event.slug}`}>{event.title}</Link>)}</div>; })}</div>}
-    {view === 'week' && week.data && <div className="filterbar">{week.data.days.map(day => <button className="pill" key={day.date} onClick={() => setAnchor(new Date(day.date + 'T12:00:00'))}>{new Date(day.date + 'T12:00:00').toLocaleDateString('en-CA', { weekday: 'long', month: 'short', day: 'numeric' })} · {day.eventCount}</button>)}</div>}
+    <div className="section-heading"><div><h2 style={{ margin: 0 }}>{view === 'week' ? week.data ? `${dateOnlyFmt(week.data.weekStart)} – ${dateOnlyFmt(week.data.weekEnd)}` : 'Week view' : view === 'upcoming' ? 'What’s coming up' : monthLabel}</h2><p className="hint" style={{ margin: '8px 0 0' }}>All times shown in Tumbler Ridge time (Pacific).</p></div>{view !== 'upcoming' && <div style={{ display: 'flex', gap: 8 }}>{view === 'week' && <button className="btn secondary small" onClick={() => window.print()} aria-label="Print weekly schedule">Print week</button>}<button className="btn secondary small" onClick={() => changePeriod(-1)} aria-label={view === 'week' ? 'Previous week' : 'Previous month'}><ChevronLeft size={17} /></button><button className="btn secondary small" onClick={() => changePeriod(1)} aria-label={view === 'week' ? 'Next week' : 'Next month'}><ChevronRight size={17} /></button></div>}</div>
+    {view === 'month' && !events.isLoading && !events.error && <div className="calendar-grid">{['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => <div key={d} className="calendar-cell" style={{ minHeight: 35, background: '#e8e5dd', fontWeight: 700 }}>{d}</div>)}{monthGrid.map((d, i) => { const sameMonth = d.getUTCMonth() === anchorDate.getUTCMonth(); const dayEvents = events.data?.filter(event => event.startAt && vancouverDateString(event.startAt) === vancouverDateString(d)) || []; return <div key={i} className="calendar-cell" style={{ opacity: sameMonth ? 1 : .48 }}><strong>{d.getUTCDate()}</strong>{dayEvents.map(event => <Link key={event.id} href={`/events/${event.slug}`}>{event.title}</Link>)}</div>; })}</div>}
+    {view === 'week' && week.data && <div className="filterbar">{week.data.days.map(day => <button className="pill" key={day.date} onClick={() => setAnchor(new Date(day.date + 'T12:00:00Z'))}>{new Date(day.date + 'T12:00:00Z').toLocaleDateString('en-CA', { timeZone: communityTimeZone, weekday: 'long', month: 'short', day: 'numeric' })} · {day.eventCount}</button>)}</div>}
     {(view === 'upcoming' || view === 'week') && <EventList events={events.data} loading={events.isLoading} error={events.error} retry={() => events.refetch()} />}
     {view === 'month' && events.error && <LoadError error={events.error} retry={() => events.refetch()} />}
     {view === 'month' && !events.isLoading && !events.error && !events.data?.length && <Empty title="A clear month" text="No published events are listed yet." />}
@@ -241,7 +268,7 @@ function SubmitPage() {
       const uploaded: UploadClaim[] = [];
       for (const file of files) {
         const contentType = file.type as 'image/jpeg' | 'image/png' | 'image/webp' | 'application/pdf';
-        const urlResult = await requestUpload.mutateAsync({ data: { name: file.name, size: file.size, contentType } });
+        const urlResult = await requestUpload.mutateAsync({ data: { name: file.name, size: file.size, contentType, website: String(form.get('website') || '') } });
         const put = await fetch(urlResult.uploadURL, { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
         if (!put.ok) throw new Error(`Could not upload ${file.name}. Please try again.`);
         const completeResult = await complete.mutateAsync({ data: { uploadId: urlResult.uploadId, claimToken: urlResult.claimToken } });
@@ -251,9 +278,10 @@ function SubmitPage() {
       const rawStart = String(form.get('startAt') || '');
       const rawEnd = String(form.get('endAt') || '');
       const details = [String(form.get('details') || ''), String(form.get('copiedText') || '') ? `Copied event text:\n${String(form.get('copiedText'))}` : ''].filter(Boolean).join('\n\n');
+      const selectedCategory = String(form.get('category') || '');
       const result = await create.mutateAsync({ data: {
         title: String(form.get('title') || '') || null,
-        category: String(form.get('category')) as EventCategoryType,
+        ...(selectedCategory ? { category: selectedCategory as EventCategoryType } : {}),
         startAt: rawStart ? fromLocalInput(rawStart) : null,
         endAt: rawEnd ? fromLocalInput(rawEnd) : null,
         allDay: form.get('allDay') === 'on',
@@ -280,8 +308,8 @@ function SubmitPage() {
   };
   return <Shell><main className="page section"><div className="eyebrow">No account required</div><h1 className="serif" style={{ fontSize: 58, fontWeight: 400, margin: '8px 0 12px' }}>Share what’s happening.</h1><p style={{ maxWidth: 680, color: '#58645f', lineHeight: 1.7 }}>Send us the details and our local calendar team will review them. A submission is not published automatically, and uploading a flyer does not publish it either.</p>
     <div className="split" style={{ marginTop: 30 }}><form className="paper form-grid" onSubmit={submit}>
-      <div className="field full"><label htmlFor="submission-title">Event or notice title</label><input id="submission-title" name="title" maxLength={160} placeholder="What should we call it?" required data-testid="input-submission-title" /></div>
-      <div className="field"><label htmlFor="submission-category">Category</label><select id="submission-category" name="category" required defaultValue={EventCategory.Community_Events} data-testid="select-submission-category">{categories.map(item => <option key={item} value={item}>{item}</option>)}</select></div>
+      <div className="field full"><label htmlFor="submission-title">Event or notice title <span className="hint">(optional if you share a flyer, source link, or copied text)</span></label><input id="submission-title" name="title" maxLength={160} placeholder="What should we call it?" data-testid="input-submission-title" /></div>
+      <div className="field"><label htmlFor="submission-category">Category <span className="hint">(optional)</span></label><select id="submission-category" name="category" defaultValue="" data-testid="select-submission-category"><option value="">Choose later</option>{categories.map(item => <option key={item} value={item}>{item}</option>)}</select></div>
       <div className="field"><label htmlFor="submission-organizer">Organizing group or person</label><input id="submission-organizer" name="organizer" maxLength={160} placeholder="Optional" /></div>
       <div className="field"><label htmlFor="submission-start">Start date and time</label><input id="submission-start" name="startAt" type="datetime-local" /></div>
       <div className="field"><label htmlFor="submission-end">End date and time</label><input id="submission-end" name="endAt" type="datetime-local" /></div>
@@ -301,20 +329,34 @@ function SubmitPage() {
 
 function SubscribeForm({ compact = false }: { compact?: boolean }) {
   const create = useCreateSubscription(); const [message, setMessage] = useState(''); const [error, setError] = useState('');
-  const submit = async (e: FormEvent<HTMLFormElement>) => { e.preventDefault(); setError(''); setMessage(''); const formElement = e.currentTarget; const data = new FormData(formElement); try { const result = await create.mutateAsync({ data: { email: String(data.get('email')), weeklyDigest: data.get('weeklyDigest') === 'on', sportsRecreation: data.get('sportsRecreation') === 'on', familyYouth: data.get('familyYouth') === 'on', consent: true } }); setMessage(result.message); formElement.reset(); } catch (err) { setError(errorText(err)); } };
-  return <form onSubmit={submit} className="form-grid" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}><div className="field"><label htmlFor="updates-email">Email address</label><input id="updates-email" name="email" type="email" required maxLength={254} placeholder="you@example.ca" data-testid="input-updates-email" /></div><label className="hint"><input name="weeklyDigest" type="checkbox" defaultChecked /> Weekly digest</label><label className="hint"><input name="sportsRecreation" type="checkbox" /> Sports & recreation</label><label className="hint"><input name="familyYouth" type="checkbox" /> Families & youth</label><label className="hint"><input name="consent" type="checkbox" required /> I agree to receive the selected calendar emails. I can unsubscribe at any time.</label>{error && <div className="error-message" role="alert">{error}</div>}{message && <div className="status-message" role="status">{message}{create.data?.deliveryConfigured === false && ' Email delivery is not configured right now; your request was recorded but no confirmation email was sent.'}</div>}<button className={`btn ${compact ? 'small' : ''}`} disabled={create.isPending}>{create.isPending ? 'Sending request…' : 'Request email updates'} <ArrowRight size={15} /></button></form>;
+  const submit = async (e: FormEvent<HTMLFormElement>) => { e.preventDefault(); setError(''); setMessage(''); const formElement = e.currentTarget; const data = new FormData(formElement); try { const result = await create.mutateAsync({ data: { email: String(data.get('email')), weeklyDigest: data.get('weeklyDigest') === 'on', sportsRecreation: data.get('sportsRecreation') === 'on', familyYouth: data.get('familyYouth') === 'on', consent: true } }); setMessage(result.message); if (result.accepted) formElement.reset(); } catch (err) { setError(errorText(err)); } };
+  return <form onSubmit={submit} className="form-grid" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}><div className="field"><label htmlFor="updates-email">Email address</label><input id="updates-email" name="email" type="email" required maxLength={254} placeholder="you@example.ca" data-testid="input-updates-email" /></div><label className="hint"><input name="weeklyDigest" type="checkbox" defaultChecked /> Weekly digest <span className="hint">General community events, notices, and local services.</span></label><label className="hint"><input name="sportsRecreation" type="checkbox" /> Sports & recreation <span className="hint">Adds sports and recreation listings to the weekly digest.</span></label><label className="hint"><input name="familyYouth" type="checkbox" /> Families & youth <span className="hint">Adds family activities and youth programs to the weekly digest.</span></label><label className="hint"><input name="consent" type="checkbox" required /> I agree to receive the selected calendar emails. I can unsubscribe at any time.</label>{error && <div className="error-message" role="alert">{error}</div>}{message && <div className="status-message" role="status">{message}</div>}<button className={`btn ${compact ? 'small' : ''}`} disabled={create.isPending}>{create.isPending ? 'Sending request…' : 'Request email updates'} <ArrowRight size={15} /></button></form>;
 }
 function UpdatesPage() {
   return <Shell><main className="page section"><div className="eyebrow">Optional, and easy to manage</div><h1 className="serif" style={{ fontSize: 58, fontWeight: 400, margin: '8px 0 14px' }}>A useful note, once a week.</h1><p style={{ maxWidth: 650, color: '#58645f', lineHeight: 1.7 }}>Choose the updates you care about. We’ll send a confirmation request first; you won’t be subscribed until you confirm your email.</p><div className="split" style={{ marginTop: 30 }}><div className="paper"><SubscribeForm /></div><div><div className="notice-box"><Mail size={22} /><div><h3>Your inbox stays yours</h3><p>Every confirmation link is private and can be used to update your preferences or unsubscribe. Email availability depends on delivery configuration.</p></div></div><p className="hint" style={{ marginTop: 16 }}>Already subscribed? Use the secure management link included in your calendar email. It opens your preference and unsubscribe controls.</p></div></div></main></Shell>;
 }
 
 function SubscriptionActionPage({ action }: { action: 'confirm' | 'unsubscribe' | 'manage' }) {
-  const params = new URLSearchParams(window.location.search); const token = params.get('token') || '';
+  const storageKey = `community-calendar:${window.location.pathname}:token`;
+  const [token] = useState(() => {
+    let urlToken = '';
+    try {
+      urlToken = decodeURIComponent(window.location.hash.slice(1)) || new URLSearchParams(window.location.search).get('token') || '';
+      const saved = window.sessionStorage.getItem(storageKey) || '';
+      const value = urlToken || saved;
+      if (urlToken) window.sessionStorage.setItem(storageKey, urlToken);
+      if (window.location.hash || window.location.search) window.history.replaceState(window.history.state, document.title, window.location.pathname);
+      return value;
+    } catch {
+      return urlToken;
+    }
+  });
+  const clearPrivateToken = () => { try { window.sessionStorage.removeItem(storageKey); } catch { /* Session storage may be disabled. */ } };
   const confirm = useConfirmSubscription(); const getPrefs = useGetSubscriptionPreferences(); const update = useUpdateSubscriptionPreferences(); const unsubscribe = useUnsubscribe();
   const [preferences, setPreferences] = useState({ weeklyDigest: true, sportsRecreation: false, familyYouth: false }); const [message, setMessage] = useState(''); const [error, setError] = useState('');
   const loadPrefs = async () => { if (!token) { setError('This management link is missing its private token. Please open the original email link.'); return; } try { const value = await getPrefs.mutateAsync({ data: { token } }); setPreferences({ weeklyDigest: value.weeklyDigest, sportsRecreation: value.sportsRecreation, familyYouth: value.familyYouth }); setMessage(value.unsubscribed ? 'This subscription is currently unsubscribed.' : value.confirmed ? 'Your email is confirmed. You can update your choices below.' : 'This email has not been confirmed yet.'); } catch (err) { setError(errorText(err)); } };
-  const doConfirm = async () => { try { const result = await confirm.mutateAsync({ data: { token } }); setMessage(result.message); if (!result.success) setError(result.message); } catch (err) { setError(errorText(err)); } };
-  const doUnsubscribe = async () => { try { const result = await unsubscribe.mutateAsync({ data: { token } }); setMessage(result.message); if (!result.success) setError(result.message); } catch (err) { setError(errorText(err)); } };
+  const doConfirm = async () => { try { const result = await confirm.mutateAsync({ data: { token } }); setMessage(result.message); if (!result.success) setError(result.message); else clearPrivateToken(); } catch (err) { setError(errorText(err)); } };
+  const doUnsubscribe = async () => { try { const result = await unsubscribe.mutateAsync({ data: { token } }); setMessage(result.message); if (!result.success) setError(result.message); else clearPrivateToken(); } catch (err) { setError(errorText(err)); } };
   const savePrefs = async (e: FormEvent) => { e.preventDefault(); try { const result = await update.mutateAsync({ data: { token, ...preferences } }); setMessage(result.message); } catch (err) { setError(errorText(err)); } };
   return <Shell><main className="page section" style={{ maxWidth: 760 }}><div className="eyebrow">Calendar email settings</div><h1 className="serif" style={{ fontSize: 52, fontWeight: 400, margin: '8px 0 24px' }}>{action === 'confirm' ? 'Confirm your email' : action === 'unsubscribe' ? 'Unsubscribe' : 'Manage preferences'}</h1>{!token && <div className="error-message">A private management token is required. Please use the secure link from your calendar email.</div>}{action === 'confirm' && <div className="paper"><p>Confirm your request to receive the community calendar by email.</p><button className="btn" onClick={doConfirm} disabled={!token || confirm.isPending}>{confirm.isPending ? 'Confirming…' : 'Confirm subscription'}</button></div>}{action === 'unsubscribe' && <div className="paper"><p>Stop future calendar emails for this address. You can subscribe again at any time.</p><button className="btn" onClick={doUnsubscribe} disabled={!token || unsubscribe.isPending}>{unsubscribe.isPending ? 'Unsubscribing…' : 'Unsubscribe'}</button></div>}{action === 'manage' && <div className="paper"><button className="btn secondary small" onClick={loadPrefs} disabled={!token || getPrefs.isPending}>{getPrefs.isPending ? 'Loading preferences…' : 'Load current preferences'}</button><form onSubmit={savePrefs} style={{ marginTop: 20, display: 'grid', gap: 13 }}>{[['weeklyDigest', 'Weekly digest'], ['sportsRecreation', 'Sports & recreation'], ['familyYouth', 'Families & youth']].map(([key, label]) => <label className="hint" key={key}><input type="checkbox" checked={preferences[key as keyof typeof preferences]} onChange={e => setPreferences(p => ({ ...p, [key]: e.target.checked }))} /> {label}</label>)}<button className="btn" disabled={!token || update.isPending}>{update.isPending ? 'Saving…' : 'Save preferences'}</button></form><button className="btn secondary small" style={{ marginTop: 12 }} onClick={doUnsubscribe} disabled={!token || unsubscribe.isPending}>Unsubscribe instead</button></div>}{error && <div className="error-message" role="alert">{error}</div>}{message && <div className="status-message" role="status">{message}</div>}</main></Shell>;
 }
@@ -329,12 +371,72 @@ function EventEditor({ initial, onDone }: { initial?: Event; onDone: () => void 
   return <form onSubmit={submit} className="paper form-grid" style={{ margin: '18px 0' }}><div className="field full"><label>Title</label><input name="title" defaultValue={initial?.title} required minLength={3} maxLength={160} /></div><div className="field"><label>Category</label><select name="category" defaultValue={initial?.category || EventCategory.Community_Events}>{categories.map(c => <option value={c} key={c}>{c}</option>)}</select></div><div className="field"><label>Status</label><select name="status" defaultValue={initial?.status || EventStatus.draft}>{Object.values(EventStatus).map(s => <option key={s} value={s}>{s}</option>)}</select></div><div className="field"><label>Start</label><input name="startAt" type="datetime-local" defaultValue={localInputDate(initial?.startAt)} required /></div><div className="field"><label>End</label><input name="endAt" type="datetime-local" defaultValue={localInputDate(initial?.endAt)} /></div><div className="field full"><label>Summary</label><input name="summary" defaultValue={initial?.summary || ''} maxLength={280} /></div><div className="field full"><label>Description</label><textarea name="description" defaultValue={initial?.description || ''} maxLength={5000} /></div><div className="field"><label>Location</label><input name="location" defaultValue={initial?.location || ''} /></div><div className="field"><label>Organizer</label><input name="organizer" defaultValue={initial?.organizer || ''} /></div><div className="field"><label>Contact</label><input name="contact" defaultValue={initial?.contact || ''} /></div><div className="field"><label>Cost</label><input name="cost" defaultValue={initial?.cost || ''} /></div><div className="field"><label>Source URL</label><input name="sourceUrl" type="url" defaultValue={initial?.sourceUrl || ''} /></div><div className="field"><label>Registration URL</label><input name="registrationUrl" type="url" defaultValue={initial?.registrationUrl || ''} /></div><div className="field full"><label>Tags, comma separated</label><input name="tags" defaultValue={initial?.tags?.join(', ')} /></div><div className="field full"><label><input name="allDay" type="checkbox" defaultChecked={initial?.allDay} /> All day</label><label><input name="isDemo" type="checkbox" defaultChecked={initial?.isDemo} /> Demonstration data (clearly labeled publicly)</label></div>{error && <div className="error-message field full">{error}</div>}<div className="form-actions"><button className="btn" disabled={mutation.isPending}>{mutation.isPending ? 'Saving…' : initial ? 'Save changes' : 'Create event'}</button><button type="button" className="btn secondary" onClick={onDone}>Cancel</button></div></form>;
 }
 
+type SubmissionRow = ListSubmissionsQueryResult[number];
+function SubmissionApprovalEditor({ submission, onCancel, onApproved }: { submission: SubmissionRow; onCancel: () => void; onApproved: () => void }) {
+  const approve = useApproveSubmission();
+  const [error, setError] = useState('');
+  const submit = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setError('');
+    const form = new FormData(e.currentTarget);
+    const startAt = String(form.get('startAt') || '');
+    if (!startAt) {
+      setError('Add a confirmed start date and time before publishing.');
+      return;
+    }
+    try {
+      await approve.mutateAsync({
+        id: submission.id,
+        data: {
+          title: String(form.get('title') || '').trim(),
+          summary: String(form.get('summary') || '').trim() || null,
+          description: String(form.get('description') || '').trim() || null,
+          category: String(form.get('category')) as EventCategoryType,
+          startAt: fromLocalInput(startAt),
+          endAt: String(form.get('endAt') || '') ? fromLocalInput(String(form.get('endAt'))) : null,
+          allDay: form.get('allDay') === 'on',
+          location: String(form.get('location') || '').trim() || null,
+          sourceUrl: String(form.get('sourceUrl') || '').trim() || submission.sourceUrl || null,
+          organizer: String(form.get('organizer') || '').trim() || submission.organizer || null,
+          contact: String(form.get('contact') || '').trim() || null,
+          cost: String(form.get('cost') || '').trim() || null,
+          registrationUrl: String(form.get('registrationUrl') || '').trim() || null,
+          tags: [],
+        },
+      });
+      onApproved();
+    } catch (err) {
+      setError(errorText(err));
+    }
+  };
+  return <form onSubmit={submit} className="paper form-grid" style={{ marginTop: 14 }}>
+    <div className="section-heading field full" style={{ marginBottom: 0 }}><div><h3>Review and publish event</h3><p className="hint">Confirm every detail against the source before publishing.</p></div></div>
+    <div className="field full"><label>Public event title</label><input name="title" defaultValue={submission.title || ''} required minLength={3} maxLength={160} /></div>
+    <div className="field"><label>Category</label><select name="category" defaultValue={submission.category || EventCategory.Community_Events}>{categories.map(category => <option key={category} value={category}>{category}</option>)}</select></div>
+    <div className="field"><label>Start date and time</label><input name="startAt" type="datetime-local" defaultValue={localInputDate(submission.startAt)} required /></div>
+    <div className="field"><label>End date and time</label><input name="endAt" type="datetime-local" defaultValue={localInputDate(submission.endAt)} /></div>
+    <div className="field full"><label><input name="allDay" type="checkbox" defaultChecked={submission.allDay} /> All-day event</label></div>
+    <div className="field"><label>Location</label><input name="location" defaultValue={submission.location || ''} /></div>
+    <div className="field"><label>Organizer</label><input name="organizer" defaultValue={submission.organizer || ''} /></div>
+    <div className="field full"><label>Public summary</label><input name="summary" maxLength={280} placeholder="Short description for the calendar" /></div>
+    <div className="field full"><label>Public description</label><textarea name="description" defaultValue={submission.details || ''} maxLength={5000} /></div>
+    <div className="field"><label>Public organizer contact</label><input name="contact" placeholder="Only include a public contact" /></div>
+    <div className="field"><label>Cost</label><input name="cost" /></div>
+    <div className="field"><label>Source URL</label><input name="sourceUrl" type="url" defaultValue={submission.sourceUrl || ''} /></div>
+    <div className="field"><label>Registration URL</label><input name="registrationUrl" type="url" /></div>
+    {error && <div className="error-message field full" role="alert">{error}</div>}
+    <div className="form-actions"><button className="btn" disabled={approve.isPending}>{approve.isPending ? 'Publishing…' : 'Approve and publish'}</button><button type="button" className="btn secondary" onClick={onCancel}>Cancel</button></div>
+  </form>;
+}
+
 function AdminPage() {
   const status = useGetAdminStatus({ query: { queryKey: getGetAdminStatusQueryKey(), retry: false } });
+  const { isSignedIn } = useUser();
+  const { signOut } = useClerk();
   const [tab, setTab] = useState<'events' | 'submissions' | 'delivery'>('events');
   if (status.isLoading) return <Shell><Loading label="Checking administrator access" /></Shell>;
-  if (status.error) return <Shell><main className="page section"><div className="eyebrow">Organizer workspace</div><h1 className="serif" style={{ fontSize: 52, fontWeight: 400 }}>Administrator access</h1><div className="error-message">We couldn’t check administrator access. Please sign in with an account configured by the calendar administrator. {errorText(status.error)}</div><Link className="btn" href="/sign-in">Sign in</Link></main></Shell>;
-  if (!status.data?.isAdmin) return <Shell><main className="page section" style={{ maxWidth: 720 }}><div className="eyebrow">For calendar organizers</div><h1 className="serif" style={{ fontSize: 54, fontWeight: 400 }}>Administrator access</h1><div className="notice-box"><ShieldCheck size={22} /><div><h3>This area is restricted</h3><p>Signing in does not automatically make an account an administrator. Access is granted separately by the calendar administrator.</p></div></div><div style={{ marginTop: 20 }}><Link href="/sign-in" className="btn">Sign in with Clerk</Link></div></main></Shell>;
+  if (status.error) return <Shell><main className="page section"><div className="eyebrow">Organizer workspace</div><h1 className="serif" style={{ fontSize: 52, fontWeight: 400 }}>Administrator access</h1><div className="error-message">We couldn’t check administrator access. {errorText(status.error)}</div><Link className="btn" href="/sign-in">Sign in</Link></main></Shell>;
+  if (!status.data?.isAdmin) return <Shell><main className="page section" style={{ maxWidth: 720 }}><div className="eyebrow">For calendar organizers</div><h1 className="serif" style={{ fontSize: 54, fontWeight: 400 }}>Administrator access</h1><div className="notice-box"><ShieldCheck size={22} /><div><h3>{status.data?.adminSetupRequired ? 'Administrator access needs setup' : 'This area is restricted'}</h3><p>{status.data?.adminSetupRequired ? 'The project owner must configure the server-side ADMIN_EMAILS allow-list before anyone can manage events.' : isSignedIn ? 'This signed-in account is not on the administrator allow-list. Signing in alone does not grant access.' : 'Sign in with the account that the calendar administrator has authorized.'}</p></div></div><div style={{ marginTop: 20 }}>{isSignedIn ? <button className="btn secondary" onClick={() => signOut({ redirectUrl: basePath || '/' })}>Sign out and switch account</button> : <Link href="/sign-in" className="btn">Sign in with Clerk</Link>}</div></main></Shell>;
   return <Shell><main className="page section"><div className="eyebrow">Private organizer area</div><h1 className="serif" style={{ fontSize: 54, fontWeight: 400, margin: '8px 0' }}>Calendar desk</h1><div className="tabs">{(['events', 'submissions', 'delivery'] as const).map(t => <button key={t} onClick={() => setTab(t)} className={tab === t ? 'selected' : ''}>{t === 'events' ? 'Events' : t === 'submissions' ? 'Submissions' : 'Email & digest'}</button>)}</div>{tab === 'events' ? <AdminEvents /> : tab === 'submissions' ? <AdminSubmissions /> : <AdminDelivery />}</main></Shell>;
 }
 function AdminEvents() {
@@ -343,26 +445,25 @@ function AdminEvents() {
   return <><div className="section-heading"><div><h2>Events</h2><p className="hint">Only published events appear in the public calendar.</p></div><button className="btn" onClick={() => setEditing('new')}>Create event <ArrowRight size={15} /></button></div>{editing && <EventEditor key={editing === 'new' ? 'new' : editing.id} initial={editing === 'new' ? undefined : editing} onDone={() => setEditing(null)} />}{q.isLoading ? <Loading /> : q.error ? <LoadError error={q.error} retry={() => q.refetch()} /> : !q.data?.length ? <Empty title="No events to manage" text="Create the first event for the community calendar." /> : <div style={{ overflowX: 'auto' }}><table className="admin-table"><thead><tr><th>Event</th><th>Date</th><th>Status</th><th>Actions</th></tr></thead><tbody>{q.data.map(event => <tr key={event.id}><td><b>{event.title}</b><div className="hint">{event.category}{event.isDemo ? ' · Demonstration data' : ''}</div></td><td>{dateFmt(event.startAt)}<div className="hint">{event.allDay ? 'All day' : timeFmt(event.startAt)}</div></td><td><span className="tag">{event.status}</span></td><td><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}><button className="btn secondary small" onClick={() => setEditing(event)}>Edit</button><button className="btn secondary small" disabled={del.isPending} onClick={() => remove(event)}>Remove</button></div></td></tr>)}</tbody></table></div>}</>;
 }
 function AdminSubmissions() {
-  const q = useListSubmissions({ query: { queryKey: getListSubmissionsQueryKey(), retry: false } }); const approve = useApproveSubmission(); const status = useUpdateSubmissionStatus(); const qc = useQueryClient(); const [message, setMessage] = useState('');
+  const q = useListSubmissions({ query: { queryKey: getListSubmissionsQueryKey(), retry: false } }); const status = useUpdateSubmissionStatus(); const qc = useQueryClient(); const [message, setMessage] = useState(''); const [approvalId, setApprovalId] = useState<string | null>(null);
   const refresh = async () => { await Promise.all([qc.invalidateQueries({ queryKey: getListSubmissionsQueryKey() }), qc.invalidateQueries({ queryKey: getListAdminEventsQueryKey() }), qc.invalidateQueries({ queryKey: getListEventsQueryKey() }), qc.invalidateQueries({ queryKey: getGetCalendarOverviewQueryKey() })]); };
-  const approveIt = async (s: NonNullable<typeof q.data>[number]) => { if (!s.category || !s.startAt) { setMessage(`Submission ${s.reference} needs a category and start date before approval.`); return; } const title = s.title || window.prompt('Enter a title for this event', '') || ''; if (title.length < 3) return; try { await approve.mutateAsync({ id: s.id, data: { title, summary: null, description: s.details || null, category: s.category, startAt: s.startAt, endAt: s.endAt || null, allDay: s.allDay || false, location: s.location || null, sourceUrl: s.sourceUrl || null, organizer: s.organizer || null, contact: s.followUpEmail || null, cost: null, registrationUrl: null, tags: [] } }); setMessage('Submission approved and added as a published event.'); await refresh(); } catch (err) { setMessage(errorText(err)); } };
   const reject = async (id: string, value: 'rejected' | 'removed') => { try { await status.mutateAsync({ id, data: { status: value as typeof SubmissionStatusInputStatus.rejected } }); await refresh(); } catch (err) { setMessage(errorText(err)); } };
-  const openAttachment = async (id: string, attachmentId = 1) => { try { const blob = await fetch(`/api/admin/submissions/${id}/attachments/${attachmentId}`).then(r => { if (!r.ok) throw new Error('Could not open private attachment.'); return r.blob(); }); const url = URL.createObjectURL(blob); window.open(url, '_blank', 'noopener'); setTimeout(() => URL.revokeObjectURL(url), 60_000); } catch (err) { setMessage(errorText(err)); } };
+  const openAttachment = async (id: string, attachmentId: string) => { try { const blob = await fetch(`${basePath}/api/admin/submissions/${id}/attachments/${attachmentId}`).then(r => { if (!r.ok) throw new Error('Could not open private attachment.'); return r.blob(); }); const url = URL.createObjectURL(blob); window.open(url, '_blank', 'noopener'); setTimeout(() => URL.revokeObjectURL(url), 60_000); } catch (err) { setMessage(errorText(err)); } };
   return <>
     <div className="section-heading"><div><h2>Submissions</h2><p className="hint">Files stay private; uploading never publishes a submission.</p></div></div>
     {message && <div className="status-message" role="status">{message}</div>}
     {q.isLoading ? <Loading /> : q.error ? <LoadError error={q.error} retry={() => q.refetch()} /> : !q.data?.length ? <Empty title="Nothing waiting for review" text="New suggestions will appear here." /> : <div style={{ display: 'grid', gap: 12 }}>
       {q.data.map(s => <article className="paper" key={s.id}><div style={{ display: 'flex', justifyContent: 'space-between', gap: 15, flexWrap: 'wrap' }}>
-        <div><span className="tag">{s.status}</span>{s.duplicatePotential && <span className="tag" style={{ marginLeft: 6, background: '#f0e4cc' }}>Possible duplicate</span>}<h3 className="serif" style={{ fontSize: 27, fontWeight: 400, margin: '9px 0' }}>{s.title || 'Untitled suggestion'}</h3><p className="hint mono">{s.reference} · received {dateFmt(s.createdAt)}</p><p>{s.details || 'No extra details supplied.'}</p><div className="hint">{s.category || 'Category not supplied'} · {dateFmt(s.startAt)} · {s.location || 'Location not supplied'}</div><div className="hint">Organizer: {s.organizer || 'Not supplied'} · follow-up: {s.followUpEmail || 'Not supplied'}</div>{s.sourceUrl && <a href={s.sourceUrl} target="_blank" rel="noreferrer">Source link <ExternalLink size={13} /></a>}</div>
-        <div style={{ display: 'flex', alignItems: 'start', gap: 7, flexWrap: 'wrap' }}>{s.attachmentCount > 0 && Array.from({ length: s.attachmentCount }, (_, index) => <button className="btn secondary small" key={index} onClick={() => openAttachment(s.id, index + 1)}><FileText size={14} /> Preview flyer {index + 1}</button>)}{s.status === 'pending' && <><button className="btn small" disabled={approve.isPending} onClick={() => approveIt(s)}>Approve</button><button className="btn secondary small" disabled={status.isPending} onClick={() => reject(s.id, 'rejected')}>Reject</button></>}{s.status !== 'removed' && <button className="btn secondary small" disabled={status.isPending} onClick={() => reject(s.id, 'removed')}>Remove</button>}</div>
-      </div></article>)}
+        <div><span className="tag">{s.status}</span>{s.duplicatePotential && <span className="tag" style={{ marginLeft: 6, background: '#f0e4cc' }}>Possible duplicate</span>}<h3 className="serif" style={{ fontSize: 27, fontWeight: 400, margin: '9px 0' }}>{s.title || 'Untitled suggestion'}</h3><p className="hint mono">{s.reference} · received {dateFmt(s.createdAt)}</p><p style={{ whiteSpace: 'pre-wrap' }}>{s.details || 'No extra details supplied.'}</p><div className="hint">{s.category || 'Category not supplied'} · {dateFmt(s.startAt)} · {s.location || 'Location not supplied'}</div><div className="hint">Organizer: {s.organizer || 'Not supplied'} · follow-up: {s.followUpEmail || 'Not supplied'}</div>{s.sourceUrl && <a href={s.sourceUrl} target="_blank" rel="noreferrer">Source link <ExternalLink size={13} /></a>}</div>
+        <div style={{ display: 'flex', alignItems: 'start', gap: 7, flexWrap: 'wrap' }}>{s.attachments.map(attachment => <button className="btn secondary small" key={attachment.id} onClick={() => openAttachment(s.id, attachment.id)}><FileText size={14} /> {attachment.name}</button>)}{s.status === 'pending' && <><button className="btn small" onClick={() => setApprovalId(approvalId === s.id ? null : s.id)}>Review and approve</button><button className="btn secondary small" disabled={status.isPending} onClick={() => reject(s.id, 'rejected')}>Reject</button></>}{s.status !== 'removed' && <button className="btn secondary small" disabled={status.isPending} onClick={() => reject(s.id, 'removed')}>Remove</button>}</div>
+      </div>{approvalId === s.id && <SubmissionApprovalEditor submission={s} onCancel={() => setApprovalId(null)} onApproved={() => { setApprovalId(null); setMessage('Submission approved and published after review.'); void refresh(); }} />}</article>)}
     </div>}
   </>;
 }
 function AdminDelivery() {
   const status = useGetEmailDeliveryStatus({ query: { queryKey: getGetEmailDeliveryStatusQueryKey(), retry: false } });
   const preview = useGetWeeklyDigestPreview(undefined, { query: { queryKey: getGetWeeklyDigestPreviewQueryKey(), retry: false } });
-  return <><div className="section-heading"><div><h2>Email delivery & digest preview</h2><p className="hint">Configuration is reported by the calendar service; this screen does not enable a provider.</p></div></div>{status.isLoading ? <div className="skeleton" style={{ height: 80 }} /> : status.error ? <LoadError error={status.error} retry={() => status.refetch()} /> : <div className="notice-box"><Mail size={23} /><div><h3>{status.data?.configured ? 'Delivery provider configured' : 'Email delivery is not configured'}</h3><p>{status.data?.message}</p><p className="hint">Provider: {status.data?.provider || 'None'} · automatic sending {status.data?.automaticSendingEnabled ? 'enabled' : 'disabled'} · timezone {status.data?.timezone}</p></div></div>}<section className="paper" style={{ marginTop: 18 }}><h3 className="serif" style={{ fontSize: 26, fontWeight: 400, marginTop: 0 }}>Next weekly digest</h3>{preview.isLoading ? <div className="skeleton" style={{ height: 60 }} /> : preview.error ? <LoadError error={preview.error} retry={() => preview.refetch()} /> : preview.data && <><p className="hint">{dateFmt(preview.data.weekStart)} – {dateFmt(preview.data.weekEnd)} · {preview.data.timezone}</p><p className="status-message">{preview.data.deliveryConfigured ? 'Delivery is configured.' : 'Preview only — email delivery is not configured; nothing will be sent.'}</p><EventList events={preview.data.events} emptyTitle="No events in the preview" emptyText="Published events for the digest week will be shown here." /></>}</section></>;
+  return <><div className="section-heading"><div><h2>Email delivery & digest preview</h2><p className="hint">The preview is read-only. No weekly sending schedule is active.</p></div></div>{status.isLoading ? <div className="skeleton" style={{ height: 80 }} /> : status.error ? <LoadError error={status.error} retry={() => status.refetch()} /> : <div className="notice-box"><Mail size={23} /><div><h3>{status.data?.configured ? 'Delivery provider configured' : 'Email delivery is not configured'}</h3><p>{status.data?.message}</p><p className="hint">Provider: {status.data?.provider || 'None'} · sending {status.data?.automaticSendingEnabled ? 'enabled' : 'disabled'} · timezone {status.data?.timezone}</p></div></div>}<section className="paper" style={{ marginTop: 18 }}><h3 className="serif" style={{ fontSize: 26, fontWeight: 400, marginTop: 0 }}>Next weekly digest</h3>{preview.isLoading ? <div className="skeleton" style={{ height: 60 }} /> : preview.error ? <LoadError error={preview.error} retry={() => preview.refetch()} /> : preview.data && <><p className="hint">{dateOnlyFmt(preview.data.weekStart)} – {dateOnlyFmt(preview.data.weekEnd)} · {preview.data.timezone}</p><p className="status-message">Digest preview only — this screen does not send email.</p><EventList events={preview.data.events} emptyTitle="No events in the preview" emptyText="Published events for the digest week will be shown here." /></>}</section></>;
 }
 
 function AuthRoute({ kind }: { kind: 'sign-in' | 'sign-up' }) {

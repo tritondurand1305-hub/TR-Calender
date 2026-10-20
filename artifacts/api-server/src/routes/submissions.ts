@@ -33,6 +33,10 @@ import {
 import { requireAdmin } from "../middlewares/adminAuth";
 import { ObjectNotFoundError, ObjectStorageService } from "../lib/objectStorage";
 import { rateLimit } from "../lib/rateLimit";
+import {
+  detectUploadContentType,
+  MAX_UPLOAD_BYTES,
+} from "../lib/uploadValidation";
 import { eventResponse } from "./events";
 
 const router: IRouter = Router();
@@ -415,7 +419,27 @@ router.get(
 
     try {
       const file = await objectStorage.getObjectEntityFile(result.upload.objectPath);
+      const [metadata] = await file.getMetadata();
+      const actualSize = Number(metadata.size);
+      if (
+        !Number.isSafeInteger(actualSize) ||
+        actualSize < 1 ||
+        actualSize > MAX_UPLOAD_BYTES ||
+        actualSize !== result.attachment.size
+      ) {
+        await file.delete({ ignoreNotFound: true });
+        res.status(404).json({ error: "Attachment failed private-file validation" });
+        return;
+      }
       const [contents] = await file.download();
+      if (
+        contents.length !== actualSize ||
+        detectUploadContentType(contents) !== result.attachment.contentType
+      ) {
+        await file.delete({ ignoreNotFound: true });
+        res.status(404).json({ error: "Attachment failed private-file validation" });
+        return;
+      }
       res.setHeader("Cache-Control", "private, no-store");
       res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader("Content-Security-Policy", "sandbox");

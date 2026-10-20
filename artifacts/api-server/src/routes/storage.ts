@@ -10,16 +10,14 @@ import {
 import { db, uploadsTable } from "@workspace/db";
 import { ObjectStorageService } from "../lib/objectStorage";
 import { rateLimit } from "../lib/rateLimit";
+import {
+  ACCEPTED_UPLOAD_TYPES,
+  detectUploadContentType,
+  MAX_UPLOAD_BYTES,
+} from "../lib/uploadValidation";
 
 const router: IRouter = Router();
 const storage = new ObjectStorageService();
-const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
-const acceptedContentTypes = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "application/pdf",
-]);
 const uploadLimit = rateLimit({
   name: "anonymous-upload",
   limit: 10,
@@ -37,34 +35,6 @@ function safeOriginalName(name: string): string {
     .trim()
     .slice(0, 180);
   return normalized || "community-flyer";
-}
-
-function detectContentType(bytes: Buffer): string | null {
-  if (
-    bytes.length >= 3 &&
-    bytes[0] === 0xff &&
-    bytes[1] === 0xd8 &&
-    bytes[2] === 0xff
-  ) {
-    return "image/jpeg";
-  }
-  if (
-    bytes.length >= 8 &&
-    bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
-  ) {
-    return "image/png";
-  }
-  if (
-    bytes.length >= 12 &&
-    bytes.toString("ascii", 0, 4) === "RIFF" &&
-    bytes.toString("ascii", 8, 12) === "WEBP"
-  ) {
-    return "image/webp";
-  }
-  if (bytes.length >= 5 && bytes.toString("ascii", 0, 5) === "%PDF-") {
-    return "application/pdf";
-  }
-  return null;
 }
 
 async function removeExpiredUploads(): Promise<void> {
@@ -105,7 +75,7 @@ router.post(
       return;
     }
     if (
-      !acceptedContentTypes.has(parsed.data.contentType) ||
+      !ACCEPTED_UPLOAD_TYPES.has(parsed.data.contentType) ||
       parsed.data.size > MAX_UPLOAD_BYTES
     ) {
       res.status(400).json({ error: "Choose a supported file up to 8 MB" });
@@ -200,7 +170,7 @@ router.post(
       }
 
       const [contents] = await file.download();
-      const detected = detectContentType(contents);
+      const detected = detectUploadContentType(contents);
       if (!detected || detected !== upload.contentType) {
         await file.delete({ ignoreNotFound: true });
         await db
