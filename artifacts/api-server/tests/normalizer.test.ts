@@ -647,6 +647,21 @@ describe("rules-v1 normaliser", () => {
     assert.ok(!/conflict|contradict|mismatch/i.test(flag.message));
   });
 
+  it("detects numeric month/day dates with and without a year", async () => {
+    for (const details of [
+      "Join us on 10/24 for the fall fair.",
+      "Join us on 10/24/2026 for the fall fair.",
+      "Join us on 9/7 for the fall fair.",
+      "Join us on 12/31/26 for the fall fair.",
+    ]) {
+      const result = await normalize(baseInput({ details }));
+
+      assert.ok(codes(result).includes("date_expression_unresolved"), details);
+      // Detection only: the structured date is neither replaced nor compared.
+      assert.equal(result.draft?.startAt, "2026-11-07T17:00:00.000Z", details);
+    }
+  });
+
   it("does not read a fundraising split as a date expression", async () => {
     const result = await normalize(
       baseInput({ details: "Join the 50/50 draw at the arena. Tickets are $5." }),
@@ -654,6 +669,12 @@ describe("rules-v1 normaliser", () => {
 
     assert.ok(!codes(result).includes("date_expression_unresolved"));
     assert.equal(result.draft?.cost, "$5");
+
+    // The distinction is the calendar range, not the literal text "50/50".
+    for (const details of ["50/50", "Split the pot 75/25 at the hall."]) {
+      const undated = await normalize(baseInput({ details }));
+      assert.ok(!codes(undated).includes("date_expression_unresolved"), details);
+    }
   });
 
   it("preserves acronyms and brand casing in all-caps titles", async () => {

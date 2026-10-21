@@ -71,7 +71,10 @@ const DATE_EXPRESSION_PATTERN = new RegExp(
     `\\b${MONTH}\\s+\\d{1,2}\\b`,
     `\\b\\d{1,2}\\s+${MONTH}\\b`,
     "\\b\\d{4}-\\d{2}-\\d{2}\\b",
-    "\\b\\d{1,2}/\\d{1,2}/\\d{2,4}\\b",
+    // Numeric month/day with an optional year. The ranges are what separate a
+    // date from a fundraiser split: "10/24" and "10/24/2026" match, "50/50"
+    // and "75/25" do not. Only detection happens here — nothing is converted.
+    "\\b(?:0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\\d|3[01])(?:/\\d{2,4})?\\b",
   ].join("|"),
   "i",
 );

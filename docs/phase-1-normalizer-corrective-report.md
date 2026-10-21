@@ -28,8 +28,10 @@ No database, API, UI, auth, storage or publication code was touched.
 | P2-9 `normalized` is not a safety signal | **Documented** (no behaviour change) |
 | P3-12 “50/50” treated as a date expression | **Fixed** as required collateral of P2-3 (otherwise broadening the flag would create a new false positive) |
 | P3-1 … P3-11 | Not addressed (no unrelated cleanup) |
+| Follow-up (post-review) — numeric dates without a year missed while avoiding `50/50` | **Fixed — see §9** |
 
-Tests went from **29 to 44**, all passing. The module stays deterministic,
+Tests went from **29 to 44** in this pass, and to **45** after the follow-up
+micro-correction in §9; all passing. The module stays deterministic,
 offline and dependency-free.
 
 ---
@@ -304,6 +306,9 @@ All commands were run from the repository root unless stated otherwise.
 | 5 | `node /tmp/corrective/probe.ts` (throwaway probe outside the repository) | see §6 |
 | 6 | `git status --porcelain` / `git diff --stat` | 5 modified source/test files plus this report; no schema, route, UI, OpenAPI or generated file |
 
+The follow-up in §9 re-ran the same commands after its change: **45/45**,
+`tsc` exit 0, `esbuild` exit 0.
+
 `tsc` and `esbuild` are the out-of-tree binaries already present in
 `/tmp/tscprobe` from the implementation phase (TypeScript 5.9.3, esbuild
 0.28.2). No dependency was added to the repository.
@@ -414,3 +419,71 @@ No database schema or migration, API route, OpenAPI or generated client, admin
 or public UI, authentication, upload/storage or publication/approval code was
 modified or otherwise touched. No dependency was added. The normalizer is
 not integrated into any request path, and this branch was not merged.
+
+---
+
+## 9. Follow-up micro-correction — numeric dates without a year
+
+### Defect
+
+The P2-3 change replaced the optional-year numeric date pattern with one that
+required a year (`\d{1,2}/\d{1,2}/\d{2,4}`). That removed the `50/50` false
+positive but also stopped detecting legitimate flyer dates written as `10/24`
+or `9/7`.
+
+### Fix
+
+**Implementation:** `rules.ts:74-78` — one range-validated numeric pattern with
+an optional year, replacing the year-only form:
+
+```
+\b(?:0?[1-9]|1[0-2])/(?:0?[1-9]|[12]\d|3[01])(?:/\d{2,4})?\b
+```
+
+The distinction is the calendar range (month 1–12, day 1–31), not a literal
+blacklist of `50/50`. `50/50`, `75/25`, `13/1` and `1/32` do not match;
+`10/24`, `10/24/2026`, `10/24/26`, `9/7`, `09/07` and `12/31` do. The pattern
+is used only for detection: nothing is converted, no year is inferred, and the
+structured date is never compared or changed.
+
+Written dates (`October 24`), ISO-style dates (`2026-10-24`) and relative
+expressions (`this Saturday`) behave exactly as before, and the flag is still
+raised when a structured `startAt` exists.
+
+### Tests
+
+- New: `detects numeric month/day dates with and without a year`
+  (`10/24`, `10/24/2026`, `9/7`, `12/31/26` each trigger
+  `date_expression_unresolved`, and `startAt` stays unchanged).
+- Extended: `does not read a fundraising split as a date expression` now also
+  checks a bare `50/50` and `75/25`, demonstrating that the exclusion is
+  range-based rather than text-specific.
+- The existing written-date test
+  (`flags an unparsed date expression even when a structured date exists`) and
+  relative-date test (`leaves relative dates unresolved`) pass unchanged.
+
+### Verification
+
+| # | Command | Result |
+| --- | --- | --- |
+| 1 | `cd artifacts/api-server && node --test tests/*.test.ts` | `# tests 45`, `# pass 45`, `# fail 0`, exit 0 |
+| 2 | `cd artifacts/api-server && npm test` | same 45/45, exit 0 |
+| 3 | `cd /tmp/tscprobe && ./node_modules/.bin/tsc -p tsconfig.repo.json` | exit 0, no diagnostics (normalizer + tests; not a workspace-wide check) |
+| 4 | esbuild bundle of `normalizer/index.ts` | exit 0 |
+
+### Limitations
+
+- Small ratios that are also valid calendar values (`3/4 cup`, `1/2 price`)
+  match and produce a confirmation flag. This is accepted: the flag asks a
+  human to confirm the date and never changes or converts anything.
+- Day-first numeric dates (`24/10`) are deliberately not matched. Supporting
+  them would make `24/7` (“open 24/7”) a false date expression, and the
+  requirement is month/day.
+- No year is inferred and no prose date is converted; the flag remains a
+  consistency question, not a conflict claim.
+
+### Scope
+
+This follow-up changed only `rules.ts`, `tests/normalizer.test.ts` and this
+report. No schema, migration, route, OpenAPI/generated file, UI, auth, storage
+or publication code was touched; no dependency was added.
