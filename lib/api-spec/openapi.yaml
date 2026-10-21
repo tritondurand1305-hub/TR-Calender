@@ -739,9 +739,107 @@ components:
         status: { $ref: "#/components/schemas/SubmissionStatus" }
         duplicatePotential: { type: boolean }
         message: { type: string }
+    NormalizationStatus:
+      type: string
+      enum: [not_run, normalized, needs_review, invalid_input, failed, cancelled]
+    NormalizationErrorCode:
+      type: string
+      enum: [invalid_input, invalid_provider_output, internal_error, cancelled]
+    ReviewFlagCode:
+      type: string
+      enum:
+        - missing_title
+        - title_too_short
+        - missing_date
+        - invalid_start_at
+        - invalid_end_at
+        - end_before_start
+        - missing_location
+        - category_uncertain
+        - cost_unclear
+        - contact_not_public
+        - invalid_source_url
+        - invalid_registration_url
+        - relative_date_unresolved
+        - date_expression_unresolved
+        - duplicate_potential
+        - truncated_input
+        - instruction_like_text
+        - safety_sensitive
+        - contact_invalid
+        - cost_ambiguous
+        - registration_url_ambiguous
+    ReviewFlag:
+      type: object
+      required: [code, message]
+      properties:
+        code: { $ref: "#/components/schemas/ReviewFlagCode" }
+        message:
+          type: string
+          maxLength: 200
+          description: Canonical server-owned text for the code.
+    DraftField:
+      type: string
+      enum: [title, category, summary, description, startAt, endAt, allDay, location, organizer, contact, cost, registrationUrl, sourceUrl, tags]
+    NormalizedEventDraft:
+      type: object
+      description: >-
+        A normalizer suggestion. It is not verified information and must be
+        reviewed by a person before it can be published.
+      required: [title, category, summary, description, startAt, endAt, allDay, location, organizer, contact, cost, registrationUrl, sourceUrl, tags, reviewFlags, changedFields, unresolvedQuestions]
+      properties:
+        title: { type: ["string", "null"], maxLength: 160 }
+        category: { $ref: "#/components/schemas/EventCategory" }
+        summary: { type: ["string", "null"], maxLength: 280 }
+        description: { type: ["string", "null"], maxLength: 5000 }
+        startAt: { type: ["string", "null"], format: date-time }
+        endAt: { type: ["string", "null"], format: date-time }
+        allDay: { type: boolean }
+        location: { type: ["string", "null"], maxLength: 200 }
+        organizer: { type: ["string", "null"], maxLength: 160 }
+        contact: { type: ["string", "null"], maxLength: 200 }
+        cost: { type: ["string", "null"], maxLength: 160 }
+        registrationUrl: { type: ["string", "null"], format: uri }
+        sourceUrl: { type: ["string", "null"], format: uri }
+        tags:
+          type: array
+          items: { type: string, maxLength: 40 }
+        reviewFlags:
+          type: array
+          items: { $ref: "#/components/schemas/ReviewFlag" }
+        changedFields:
+          type: array
+          items: { $ref: "#/components/schemas/DraftField" }
+        unresolvedQuestions:
+          type: array
+          items: { type: string, maxLength: 300 }
+    SubmissionNormalization:
+      type: object
+      description: >-
+        Normalization metadata for one submission. Never exposed on the public
+        event endpoints; `normalized` means only "a valid draft with no review
+        flags", never verified or approved.
+      required: [status, version, referenceTime, errorCode, draft]
+      properties:
+        status: { $ref: "#/components/schemas/NormalizationStatus" }
+        version: { type: ["string", "null"] }
+        referenceTime:
+          type: ["string", "null"]
+          format: date-time
+          description: >-
+            The submission timestamp the normalizer was given, not a wall-clock
+            production time.
+        errorCode:
+          oneOf:
+            - { $ref: "#/components/schemas/NormalizationErrorCode" }
+            - { type: "null" }
+        draft:
+          oneOf:
+            - { $ref: "#/components/schemas/NormalizedEventDraft" }
+            - { type: "null" }
     Submission:
       type: object
-      required: [id, reference, status, createdAt, attachmentCount, attachments]
+      required: [id, reference, status, createdAt, attachmentCount, attachments, normalization]
       properties:
         id: { type: string, format: uuid }
         reference: { type: string }
@@ -762,6 +860,7 @@ components:
         attachments:
           type: array
           items: { $ref: "#/components/schemas/SubmissionAttachment" }
+        normalization: { $ref: "#/components/schemas/SubmissionNormalization" }
     SubmissionAttachment:
       type: object
       required: [id, name, contentType, size]

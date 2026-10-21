@@ -372,9 +372,64 @@ function EventEditor({ initial, onDone }: { initial?: Event; onDone: () => void 
 }
 
 type SubmissionRow = ListSubmissionsQueryResult[number];
+const normalizationLabels: Record<string, string> = {
+  not_run: 'Normalization did not run. Review the original submission and its files.',
+  normalized: 'Draft ready with no review flags. This is not verification: a person must still check it.',
+  needs_review: 'Draft ready. Resolve every review flag before publishing.',
+  invalid_input: 'Normalization could not read this submission. Review the original submission.',
+  failed: 'Normalization failed. Review the original submission.',
+  cancelled: 'Normalization was cancelled. Review the original submission.',
+};
+function NormalizationPanel({ normalization }: { normalization: SubmissionRow['normalization'] }) {
+  const draft = normalization.draft;
+  const rows: Array<[string, string | null]> = draft ? [
+    ['Title', draft.title],
+    ['Category', draft.category],
+    ['Starts', draft.startAt ? `${dateFmt(draft.startAt)} · ${timeFmt(draft.startAt)}` : null],
+    ['Ends', draft.endAt ? `${dateFmt(draft.endAt)} · ${timeFmt(draft.endAt)}` : null],
+    ['All day', draft.allDay ? 'Yes' : 'No'],
+    ['Location', draft.location],
+    ['Organizer', draft.organizer],
+    ['Public contact', draft.contact],
+    ['Cost', draft.cost],
+    ['Registration', draft.registrationUrl],
+    ['Source', draft.sourceUrl],
+    ['Summary', draft.summary],
+    ['Tags', draft.tags.length ? draft.tags.join(', ') : null],
+  ] : [];
+  return <section className="paper" style={{ marginTop: 14, background: '#fbfaf6' }} aria-label="Normalizer suggestion">
+    <div className="eyebrow">Normalizer suggestion{normalization.version ? ` · ${normalization.version}` : ''}</div>
+    <p className="hint" style={{ marginTop: 4 }}>{normalization.status} · {normalizationLabels[normalization.status] || 'Normalization status is unavailable.'}{normalization.errorCode ? ` · error ${normalization.errorCode}` : ''}{normalization.referenceTime ? ` · reference ${dateFmt(normalization.referenceTime)}` : ''}</p>
+    {draft ? <>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 10, marginTop: 10 }}>
+        {rows.map(([label, value]) => <div key={label}><div className="hint">{label}</div><div style={{ whiteSpace: 'pre-wrap' }}>{value || 'Not supplied'}</div></div>)}
+      </div>
+      <div style={{ marginTop: 12 }}><div className="hint">Review flags ({draft.reviewFlags.length})</div>{draft.reviewFlags.length > 0 ? <ul style={{ margin: '6px 0', paddingLeft: 20 }}>{draft.reviewFlags.map(flag => <li key={flag.code}><b className="mono">{flag.code}</b> — {flag.message}</li>)}</ul> : <p className="hint">No review flags. A person must still confirm every detail against the source.</p>}</div>
+      {draft.unresolvedQuestions.length > 0 && <div style={{ marginTop: 8 }}><div className="hint">Questions for the reviewer</div><ul style={{ margin: '6px 0', paddingLeft: 20 }}>{draft.unresolvedQuestions.map(question => <li key={question}>{question}</li>)}</ul></div>}
+      {draft.changedFields.length > 0 && <p className="hint" style={{ marginTop: 8 }}>Changed by the normalizer: {draft.changedFields.join(', ')}</p>}
+    </> : <p className="hint" style={{ marginTop: 8 }}>No draft is stored. Work from the original submission and the private attachments.</p>}
+  </section>;
+}
 function SubmissionApprovalEditor({ submission, onCancel, onApproved }: { submission: SubmissionRow; onCancel: () => void; onApproved: () => void }) {
   const approve = useApproveSubmission();
   const [error, setError] = useState('');
+  // When a draft exists the form starts from it, and a null draft value stays
+  // empty: nothing is inferred. Without a draft the previous behaviour (raw
+  // submission values) is kept so legacy rows are still reviewable.
+  const draft = submission.normalization?.draft ?? null;
+  const initial = draft ? {
+    title: draft.title ?? '', category: draft.category, startAt: draft.startAt, endAt: draft.endAt,
+    allDay: draft.allDay, location: draft.location ?? '', organizer: draft.organizer ?? '',
+    summary: draft.summary ?? '', description: draft.description ?? '', contact: draft.contact ?? '',
+    cost: draft.cost ?? '', sourceUrl: draft.sourceUrl ?? '', registrationUrl: draft.registrationUrl ?? '',
+    tags: draft.tags.join(', '),
+  } : {
+    title: submission.title ?? '', category: submission.category || EventCategory.Community_Events,
+    startAt: submission.startAt ?? null, endAt: submission.endAt ?? null, allDay: submission.allDay ?? false,
+    location: submission.location ?? '', organizer: submission.organizer ?? '', summary: '',
+    description: submission.details ?? '', contact: '', cost: '',
+    sourceUrl: submission.sourceUrl ?? '', registrationUrl: '', tags: '',
+  };
   const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError('');
@@ -396,12 +451,12 @@ function SubmissionApprovalEditor({ submission, onCancel, onApproved }: { submis
           endAt: String(form.get('endAt') || '') ? fromLocalInput(String(form.get('endAt'))) : null,
           allDay: form.get('allDay') === 'on',
           location: String(form.get('location') || '').trim() || null,
-          sourceUrl: String(form.get('sourceUrl') || '').trim() || submission.sourceUrl || null,
-          organizer: String(form.get('organizer') || '').trim() || submission.organizer || null,
+          sourceUrl: String(form.get('sourceUrl') || '').trim() || null,
+          organizer: String(form.get('organizer') || '').trim() || null,
           contact: String(form.get('contact') || '').trim() || null,
           cost: String(form.get('cost') || '').trim() || null,
           registrationUrl: String(form.get('registrationUrl') || '').trim() || null,
-          tags: [],
+          tags: String(form.get('tags') || '').split(',').map(tag => tag.trim()).filter(Boolean).slice(0, 10).map(tag => tag.slice(0, 40)),
         },
       });
       onApproved();
@@ -410,20 +465,21 @@ function SubmissionApprovalEditor({ submission, onCancel, onApproved }: { submis
     }
   };
   return <form onSubmit={submit} className="paper form-grid" style={{ marginTop: 14 }}>
-    <div className="section-heading field full" style={{ marginBottom: 0 }}><div><h3>Review and publish event</h3><p className="hint">Confirm every detail against the source before publishing.</p></div></div>
-    <div className="field full"><label>Public event title</label><input name="title" defaultValue={submission.title || ''} required minLength={3} maxLength={160} /></div>
-    <div className="field"><label>Category</label><select name="category" defaultValue={submission.category || EventCategory.Community_Events}>{categories.map(category => <option key={category} value={category}>{category}</option>)}</select></div>
-    <div className="field"><label>Start date and time</label><input name="startAt" type="datetime-local" defaultValue={localInputDate(submission.startAt)} required /></div>
-    <div className="field"><label>End date and time</label><input name="endAt" type="datetime-local" defaultValue={localInputDate(submission.endAt)} /></div>
-    <div className="field full"><label><input name="allDay" type="checkbox" defaultChecked={submission.allDay} /> All-day event</label></div>
-    <div className="field"><label>Location</label><input name="location" defaultValue={submission.location || ''} /></div>
-    <div className="field"><label>Organizer</label><input name="organizer" defaultValue={submission.organizer || ''} /></div>
-    <div className="field full"><label>Public summary</label><input name="summary" maxLength={280} placeholder="Short description for the calendar" /></div>
-    <div className="field full"><label>Public description</label><textarea name="description" defaultValue={submission.details || ''} maxLength={5000} /></div>
-    <div className="field"><label>Public organizer contact</label><input name="contact" placeholder="Only include a public contact" /></div>
-    <div className="field"><label>Cost</label><input name="cost" /></div>
-    <div className="field"><label>Source URL</label><input name="sourceUrl" type="url" defaultValue={submission.sourceUrl || ''} /></div>
-    <div className="field"><label>Registration URL</label><input name="registrationUrl" type="url" /></div>
+    <div className="section-heading field full" style={{ marginBottom: 0 }}><div><h3>Review and publish event</h3><p className="hint">{draft ? 'Prefilled from the normalizer suggestion where it supplied a value; empty fields were not inferred. Confirm every detail against the source before publishing.' : 'Confirm every detail against the source before publishing.'}</p></div></div>
+    <div className="field full"><label>Public event title</label><input name="title" defaultValue={initial.title} required minLength={3} maxLength={160} /></div>
+    <div className="field"><label>Category</label><select name="category" defaultValue={initial.category}>{categories.map(category => <option key={category} value={category}>{category}</option>)}</select></div>
+    <div className="field"><label>Start date and time</label><input name="startAt" type="datetime-local" defaultValue={localInputDate(initial.startAt)} required /></div>
+    <div className="field"><label>End date and time</label><input name="endAt" type="datetime-local" defaultValue={localInputDate(initial.endAt)} /></div>
+    <div className="field full"><label><input name="allDay" type="checkbox" defaultChecked={initial.allDay} /> All-day event</label></div>
+    <div className="field"><label>Location</label><input name="location" defaultValue={initial.location} /></div>
+    <div className="field"><label>Organizer</label><input name="organizer" defaultValue={initial.organizer} /></div>
+    <div className="field full"><label>Public summary</label><input name="summary" defaultValue={initial.summary} maxLength={280} placeholder="Short description for the calendar" /></div>
+    <div className="field full"><label>Public description</label><textarea name="description" defaultValue={initial.description} maxLength={5000} /></div>
+    <div className="field"><label>Public organizer contact</label><input name="contact" defaultValue={initial.contact} placeholder="Only include a public contact" /></div>
+    <div className="field"><label>Cost</label><input name="cost" defaultValue={initial.cost} /></div>
+    <div className="field"><label>Source URL</label><input name="sourceUrl" type="url" defaultValue={initial.sourceUrl} /></div>
+    <div className="field"><label>Registration URL</label><input name="registrationUrl" type="url" defaultValue={initial.registrationUrl} /></div>
+    <div className="field full"><label>Tags, comma separated</label><input name="tags" defaultValue={initial.tags} /></div>
     {error && <div className="error-message field full" role="alert">{error}</div>}
     <div className="form-actions"><button className="btn" disabled={approve.isPending}>{approve.isPending ? 'Publishing…' : 'Approve and publish'}</button><button type="button" className="btn secondary" onClick={onCancel}>Cancel</button></div>
   </form>;
@@ -454,9 +510,9 @@ function AdminSubmissions() {
     {message && <div className="status-message" role="status">{message}</div>}
     {q.isLoading ? <Loading /> : q.error ? <LoadError error={q.error} retry={() => q.refetch()} /> : !q.data?.length ? <Empty title="Nothing waiting for review" text="New suggestions will appear here." /> : <div style={{ display: 'grid', gap: 12 }}>
       {q.data.map(s => <article className="paper" key={s.id}><div style={{ display: 'flex', justifyContent: 'space-between', gap: 15, flexWrap: 'wrap' }}>
-        <div><span className="tag">{s.status}</span>{s.duplicatePotential && <span className="tag" style={{ marginLeft: 6, background: '#f0e4cc' }}>Possible duplicate</span>}<h3 className="serif" style={{ fontSize: 27, fontWeight: 400, margin: '9px 0' }}>{s.title || 'Untitled suggestion'}</h3><p className="hint mono">{s.reference} · received {dateFmt(s.createdAt)}</p><p style={{ whiteSpace: 'pre-wrap' }}>{s.details || 'No extra details supplied.'}</p><div className="hint">{s.category || 'Category not supplied'} · {dateFmt(s.startAt)} · {s.location || 'Location not supplied'}</div><div className="hint">Organizer: {s.organizer || 'Not supplied'} · follow-up: {s.followUpEmail || 'Not supplied'}</div>{s.sourceUrl && <a href={s.sourceUrl} target="_blank" rel="noreferrer">Source link <ExternalLink size={13} /></a>}</div>
+        <div><span className="tag">{s.status}</span>{s.normalization.status !== 'not_run' && <span className="tag" style={{ marginLeft: 6 }}>normalization: {s.normalization.status}</span>}{s.duplicatePotential && <span className="tag" style={{ marginLeft: 6, background: '#f0e4cc' }}>Possible duplicate</span>}<div className="eyebrow" style={{ marginTop: 10 }}>Original submission</div><h3 className="serif" style={{ fontSize: 27, fontWeight: 400, margin: '5px 0 9px' }}>{s.title || 'Untitled suggestion'}</h3><p className="hint mono">{s.reference} · received {dateFmt(s.createdAt)}</p><p style={{ whiteSpace: 'pre-wrap' }}>{s.details || 'No extra details supplied.'}</p><div className="hint">{s.category || 'Category not supplied'} · {dateFmt(s.startAt)} · {s.location || 'Location not supplied'}</div><div className="hint">Organizer: {s.organizer || 'Not supplied'} · follow-up: {s.followUpEmail || 'Not supplied'}</div>{s.sourceUrl && <a href={s.sourceUrl} target="_blank" rel="noreferrer">Source link <ExternalLink size={13} /></a>}</div>
         <div style={{ display: 'flex', alignItems: 'start', gap: 7, flexWrap: 'wrap' }}>{s.attachments.map(attachment => <button className="btn secondary small" key={attachment.id} onClick={() => openAttachment(s.id, attachment.id)}><FileText size={14} /> {attachment.name}</button>)}{s.status === 'pending' && <><button className="btn small" onClick={() => setApprovalId(approvalId === s.id ? null : s.id)}>Review and approve</button><button className="btn secondary small" disabled={status.isPending} onClick={() => reject(s.id, 'rejected')}>Reject</button></>}{s.status !== 'removed' && <button className="btn secondary small" disabled={status.isPending} onClick={() => reject(s.id, 'removed')}>Remove</button>}</div>
-      </div>{approvalId === s.id && <SubmissionApprovalEditor submission={s} onCancel={() => setApprovalId(null)} onApproved={() => { setApprovalId(null); setMessage('Submission approved and published after review.'); void refresh(); }} />}</article>)}
+      </div><NormalizationPanel normalization={s.normalization} />{approvalId === s.id && <SubmissionApprovalEditor submission={s} onCancel={() => setApprovalId(null)} onApproved={() => { setApprovalId(null); setMessage('Submission approved and published after review.'); void refresh(); }} />}</article>)}
     </div>}
   </>;
 }

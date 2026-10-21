@@ -7,6 +7,7 @@
  */
 import type { EventCategory } from './eventCategory';
 import type { SubmissionAttachment } from './submissionAttachment';
+import type { SubmissionNormalization } from './submissionNormalization';
 import type { SubmissionStatus } from './submissionStatus';
 
 export interface Submission {
@@ -36,4 +37,5 @@ export interface Submission {
   attachmentCount: number;
   duplicatePotential?: boolean;
   attachments: SubmissionAttachment[];
+  normalization: SubmissionNormalization;
 }

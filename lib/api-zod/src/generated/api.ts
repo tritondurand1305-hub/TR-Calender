@@ -512,6 +512,26 @@ export const DeleteEventResponse = zod.void()
 export const listSubmissionsResponseAttachmentCountMin = 0;
 
 
+export const listSubmissionsResponseNormalizationDraftOneTitleMax = 160;
+
+export const listSubmissionsResponseNormalizationDraftOneSummaryMax = 280;
+
+export const listSubmissionsResponseNormalizationDraftOneDescriptionMax = 5000;
+
+export const listSubmissionsResponseNormalizationDraftOneLocationMax = 200;
+
+export const listSubmissionsResponseNormalizationDraftOneOrganizerMax = 160;
+
+export const listSubmissionsResponseNormalizationDraftOneContactMax = 200;
+
+export const listSubmissionsResponseNormalizationDraftOneCostMax = 160;
+
+export const listSubmissionsResponseNormalizationDraftOneTagsItemMax = 40;
+
+export const listSubmissionsResponseNormalizationDraftOneReviewFlagsItemMessageMax = 200;
+
+export const listSubmissionsResponseNormalizationDraftOneUnresolvedQuestionsItemMax = 300;
+
 
 
 export const ListSubmissionsResponseItem = zod.object({
@@ -536,7 +556,35 @@ export const ListSubmissionsResponseItem = zod.object({
   "name": zod.string(),
   "contentType": zod.enum(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']),
   "size": zod.number().int().min(1)
-}))
+})),
+  "normalization": zod.object({
+  "status": zod.enum(['not_run', 'normalized', 'needs_review', 'invalid_input', 'failed', 'cancelled']),
+  "version": zod.string().nullable(),
+  "referenceTime": zod.coerce.date().nullable().describe('The submission timestamp the normalizer was given, not a wall-clock production time.'),
+  "errorCode": zod.union([zod.enum(['invalid_input', 'invalid_provider_output', 'internal_error', 'cancelled']),zod.null()]),
+  "draft": zod.union([zod.object({
+  "title": zod.string().max(listSubmissionsResponseNormalizationDraftOneTitleMax).nullable(),
+  "category": zod.enum(['Community Events', 'Families & Youth', 'Sports & Recreation', 'Seniors & Services', 'Community Notices']),
+  "summary": zod.string().max(listSubmissionsResponseNormalizationDraftOneSummaryMax).nullable(),
+  "description": zod.string().max(listSubmissionsResponseNormalizationDraftOneDescriptionMax).nullable(),
+  "startAt": zod.coerce.date().nullable(),
+  "endAt": zod.coerce.date().nullable(),
+  "allDay": zod.boolean(),
+  "location": zod.string().max(listSubmissionsResponseNormalizationDraftOneLocationMax).nullable(),
+  "organizer": zod.string().max(listSubmissionsResponseNormalizationDraftOneOrganizerMax).nullable(),
+  "contact": zod.string().max(listSubmissionsResponseNormalizationDraftOneContactMax).nullable(),
+  "cost": zod.string().max(listSubmissionsResponseNormalizationDraftOneCostMax).nullable(),
+  "registrationUrl": zod.string().url().nullable(),
+  "sourceUrl": zod.string().url().nullable(),
+  "tags": zod.array(zod.string().max(listSubmissionsResponseNormalizationDraftOneTagsItemMax)),
+  "reviewFlags": zod.array(zod.object({
+  "code": zod.enum(['missing_title', 'title_too_short', 'missing_date', 'invalid_start_at', 'invalid_end_at', 'end_before_start', 'missing_location', 'category_uncertain', 'cost_unclear', 'contact_not_public', 'invalid_source_url', 'invalid_registration_url', 'relative_date_unresolved', 'date_expression_unresolved', 'duplicate_potential', 'truncated_input', 'instruction_like_text', 'safety_sensitive', 'contact_invalid', 'cost_ambiguous', 'registration_url_ambiguous']),
+  "message": zod.string().max(listSubmissionsResponseNormalizationDraftOneReviewFlagsItemMessageMax).describe('Canonical server-owned text for the code.')
+})),
+  "changedFields": zod.array(zod.enum(['title', 'category', 'summary', 'description', 'startAt', 'endAt', 'allDay', 'location', 'organizer', 'contact', 'cost', 'registrationUrl', 'sourceUrl', 'tags'])),
+  "unresolvedQuestions": zod.array(zod.string().max(listSubmissionsResponseNormalizationDraftOneUnresolvedQuestionsItemMax))
+}).describe('A normalizer suggestion. It is not verified information and must be reviewed by a person before it can be published.'),zod.null()])
+}).describe('Normalization metadata for one submission. Never exposed on the public event endpoints; `normalized` means only "a valid draft with no review flags", never verified or approved.')
 })
 export const ListSubmissionsResponse = zod.array(ListSubmissionsResponseItem)
 
@@ -624,6 +672,26 @@ export const UpdateSubmissionStatusBody = zod.object({
 export const updateSubmissionStatusResponseAttachmentCountMin = 0;
 
 
+export const updateSubmissionStatusResponseNormalizationDraftOneTitleMax = 160;
+
+export const updateSubmissionStatusResponseNormalizationDraftOneSummaryMax = 280;
+
+export const updateSubmissionStatusResponseNormalizationDraftOneDescriptionMax = 5000;
+
+export const updateSubmissionStatusResponseNormalizationDraftOneLocationMax = 200;
+
+export const updateSubmissionStatusResponseNormalizationDraftOneOrganizerMax = 160;
+
+export const updateSubmissionStatusResponseNormalizationDraftOneContactMax = 200;
+
+export const updateSubmissionStatusResponseNormalizationDraftOneCostMax = 160;
+
+export const updateSubmissionStatusResponseNormalizationDraftOneTagsItemMax = 40;
+
+export const updateSubmissionStatusResponseNormalizationDraftOneReviewFlagsItemMessageMax = 200;
+
+export const updateSubmissionStatusResponseNormalizationDraftOneUnresolvedQuestionsItemMax = 300;
+
 
 
 export const UpdateSubmissionStatusResponse = zod.object({
@@ -648,7 +716,35 @@ export const UpdateSubmissionStatusResponse = zod.object({
   "name": zod.string(),
   "contentType": zod.enum(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']),
   "size": zod.number().int().min(1)
-}))
+})),
+  "normalization": zod.object({
+  "status": zod.enum(['not_run', 'normalized', 'needs_review', 'invalid_input', 'failed', 'cancelled']),
+  "version": zod.string().nullable(),
+  "referenceTime": zod.coerce.date().nullable().describe('The submission timestamp the normalizer was given, not a wall-clock production time.'),
+  "errorCode": zod.union([zod.enum(['invalid_input', 'invalid_provider_output', 'internal_error', 'cancelled']),zod.null()]),
+  "draft": zod.union([zod.object({
+  "title": zod.string().max(updateSubmissionStatusResponseNormalizationDraftOneTitleMax).nullable(),
+  "category": zod.enum(['Community Events', 'Families & Youth', 'Sports & Recreation', 'Seniors & Services', 'Community Notices']),
+  "summary": zod.string().max(updateSubmissionStatusResponseNormalizationDraftOneSummaryMax).nullable(),
+  "description": zod.string().max(updateSubmissionStatusResponseNormalizationDraftOneDescriptionMax).nullable(),
+  "startAt": zod.coerce.date().nullable(),
+  "endAt": zod.coerce.date().nullable(),
+  "allDay": zod.boolean(),
+  "location": zod.string().max(updateSubmissionStatusResponseNormalizationDraftOneLocationMax).nullable(),
+  "organizer": zod.string().max(updateSubmissionStatusResponseNormalizationDraftOneOrganizerMax).nullable(),
+  "contact": zod.string().max(updateSubmissionStatusResponseNormalizationDraftOneContactMax).nullable(),
+  "cost": zod.string().max(updateSubmissionStatusResponseNormalizationDraftOneCostMax).nullable(),
+  "registrationUrl": zod.string().url().nullable(),
+  "sourceUrl": zod.string().url().nullable(),
+  "tags": zod.array(zod.string().max(updateSubmissionStatusResponseNormalizationDraftOneTagsItemMax)),
+  "reviewFlags": zod.array(zod.object({
+  "code": zod.enum(['missing_title', 'title_too_short', 'missing_date', 'invalid_start_at', 'invalid_end_at', 'end_before_start', 'missing_location', 'category_uncertain', 'cost_unclear', 'contact_not_public', 'invalid_source_url', 'invalid_registration_url', 'relative_date_unresolved', 'date_expression_unresolved', 'duplicate_potential', 'truncated_input', 'instruction_like_text', 'safety_sensitive', 'contact_invalid', 'cost_ambiguous', 'registration_url_ambiguous']),
+  "message": zod.string().max(updateSubmissionStatusResponseNormalizationDraftOneReviewFlagsItemMessageMax).describe('Canonical server-owned text for the code.')
+})),
+  "changedFields": zod.array(zod.enum(['title', 'category', 'summary', 'description', 'startAt', 'endAt', 'allDay', 'location', 'organizer', 'contact', 'cost', 'registrationUrl', 'sourceUrl', 'tags'])),
+  "unresolvedQuestions": zod.array(zod.string().max(updateSubmissionStatusResponseNormalizationDraftOneUnresolvedQuestionsItemMax))
+}).describe('A normalizer suggestion. It is not verified information and must be reviewed by a person before it can be published.'),zod.null()])
+}).describe('Normalization metadata for one submission. Never exposed on the public event endpoints; `normalized` means only "a valid draft with no review flags", never verified or approved.')
 })
 
 

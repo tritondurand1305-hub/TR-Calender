@@ -3,6 +3,7 @@ import {
   boolean,
   date,
   integer,
+  jsonb,
   pgTable,
   text,
   timestamp,
@@ -68,6 +69,17 @@ export const submissionsTable = pgTable(
     followUpEmail: text("follow_up_email"),
     status: text("status").notNull().default("pending"),
     duplicatePotential: boolean("duplicate_potential").notNull().default(false),
+    // Normalisation result. Always additive to the raw submission above: these
+    // columns are written by the server after the submission commits and never
+    // replace a raw column. All of them are safe to read as null/default on
+    // rows created before normalisation existed.
+    normalizedDraft: jsonb("normalized_draft").$type<unknown>(),
+    normalizationStatus: text("normalization_status").notNull().default("not_run"),
+    normalizerVersion: text("normalizer_version"),
+    normalizationReferenceTime: timestamp("normalization_reference_time", {
+      withTimezone: true,
+    }),
+    normalizationErrorCode: text("normalization_error_code"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

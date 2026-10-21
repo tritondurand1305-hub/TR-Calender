@@ -31,8 +31,10 @@ import {
   UpdateSubmissionStatusResponse,
 } from "@workspace/api-zod";
 import { requireAdmin } from "../middlewares/adminAuth";
+import { EVENT_INTERVAL_ERROR, endsBeforeStart } from "../lib/eventInterval";
 import { ObjectNotFoundError, ObjectStorageService } from "../lib/objectStorage";
 import { rateLimit } from "../lib/rateLimit";
+import { normalizeAndStore, readStoredNormalization } from "../lib/submissionNormalization";
 import {
   detectUploadContentType,
   MAX_UPLOAD_BYTES,
@@ -62,14 +64,28 @@ function slugFor(title: string): string {
   return `${base || "event"}-${randomBytes(3).toString("hex")}`;
 }
 
-function submissionResponse(
+export function submissionResponse(
   row: typeof submissionsTable.$inferSelect,
   attachments: (typeof submissionAttachmentsTable.$inferSelect)[],
 ) {
+  // Explicit mapping, not `...row`: the normalization columns are stored
+  // separately and must only reach an administrator through the validated
+  // `normalization` shape below.
   return {
-    ...row,
+    id: row.id,
+    reference: row.reference,
+    title: row.title,
+    category: row.category,
     startAt: row.startAt?.toISOString() ?? null,
     endAt: row.endAt?.toISOString() ?? null,
+    allDay: row.allDay,
+    location: row.location,
+    details: row.details,
+    sourceUrl: row.sourceUrl,
+    organizer: row.organizer,
+    followUpEmail: row.followUpEmail,
+    status: row.status,
+    duplicatePotential: row.duplicatePotential,
     createdAt: row.createdAt.toISOString(),
     attachmentCount: attachments.length,
     attachments: attachments.map((attachment) => ({
@@ -78,7 +94,43 @@ function submissionResponse(
       contentType: attachment.contentType,
       size: attachment.size,
     })),
+    // Re-validated on read; never a raw copy of the stored JSON.
+    normalization: readStoredNormalization(row),
   };
+}
+
+/**
+ * Normalize a submission that has already been committed and store the result.
+ *
+ * This is the exact step that runs after the insert transaction commits. It
+ * never throws and returns nothing, so a normalizer or storage problem cannot
+ * change the submitter's receipt. Exported so the route test can exercise it
+ * without an HTTP request.
+ */
+export async function runPostCommitNormalization(
+  submission: typeof submissionsTable.$inferSelect,
+  log: { error: (context: Record<string, unknown>, message: string) => void },
+): Promise<void> {
+  try {
+    const normalization = await normalizeAndStore(submission, async (id, values) => {
+      await db.update(submissionsTable).set(values).where(eq(submissionsTable.id, id));
+    });
+    if (!normalization.stored) {
+      // No error object: a driver error can echo parameter values. The row
+      // keeps `not_run`, which the admin review screen surfaces.
+      log.error(
+        {
+          submissionId: submission.id,
+          normalizationStatus: normalization.values.normalizationStatus,
+        },
+        "Unable to store normalization result",
+      );
+    }
+  } catch {
+    // `normalizeAndStore` does not throw; this guard is the final barrier
+    // between a normalization problem and a misleading 500.
+    log.error({ submissionId: submission.id }, "Normalization step failed");
+  }
 }
 
 function maybeDuplicate(
@@ -167,8 +219,8 @@ router.post("/submissions", submissionLimit, async (req, res): Promise<void> => 
 
   const startAt = data.startAt ? new Date(data.startAt) : null;
   const endAt = data.endAt ? new Date(data.endAt) : null;
-  if (startAt && endAt && endAt < startAt) {
-    res.status(400).json({ error: "The event end must be after its start" });
+  if (startAt && endsBeforeStart(startAt, endAt)) {
+    res.status(400).json({ error: EVENT_INTERVAL_ERROR });
     return;
   }
 
@@ -244,6 +296,11 @@ router.post("/submissions", submissionLimit, async (req, res): Promise<void> => 
       return created;
     });
 
+    // The submission is committed. Normalization runs afterwards and is
+    // deliberately isolated: it may fail, or its result may fail to store,
+    // without changing the receipt the submitter receives.
+    await runPostCommitNormalization(submission, req.log);
+
     res.status(201).json(
       CreateSubmissionResponse.parse({
         reference: submission.reference,
@@ -299,6 +356,15 @@ router.post(
     const parsed = ApproveSubmissionBody.safeParse(req.body);
     if (!params.success || !parsed.success) {
       res.status(400).json({ error: "Please provide complete event details to approve" });
+      return;
+    }
+
+    // Approval is the only path that can publish an event. Re-check the
+    // interval here, server-side: the browser form is not a security boundary.
+    // An invalid interval is rejected before the transaction starts, so no
+    // event is inserted and the submission keeps its status.
+    if (endsBeforeStart(parsed.data.startAt, parsed.data.endAt ?? null)) {
+      res.status(400).json({ error: EVENT_INTERVAL_ERROR });
       return;
     }
 

@@ -199,6 +199,157 @@ export interface SubmissionReceipt {
   message: string;
 }
 
+export type NormalizationStatus = typeof NormalizationStatus[keyof typeof NormalizationStatus];
+
+
+export const NormalizationStatus = {
+  not_run: 'not_run',
+  normalized: 'normalized',
+  needs_review: 'needs_review',
+  invalid_input: 'invalid_input',
+  failed: 'failed',
+  cancelled: 'cancelled',
+} as const;
+
+export type NormalizationErrorCode = typeof NormalizationErrorCode[keyof typeof NormalizationErrorCode];
+
+
+export const NormalizationErrorCode = {
+  invalid_input: 'invalid_input',
+  invalid_provider_output: 'invalid_provider_output',
+  internal_error: 'internal_error',
+  cancelled: 'cancelled',
+} as const;
+
+export type ReviewFlagCode = typeof ReviewFlagCode[keyof typeof ReviewFlagCode];
+
+
+export const ReviewFlagCode = {
+  missing_title: 'missing_title',
+  title_too_short: 'title_too_short',
+  missing_date: 'missing_date',
+  invalid_start_at: 'invalid_start_at',
+  invalid_end_at: 'invalid_end_at',
+  end_before_start: 'end_before_start',
+  missing_location: 'missing_location',
+  category_uncertain: 'category_uncertain',
+  cost_unclear: 'cost_unclear',
+  contact_not_public: 'contact_not_public',
+  invalid_source_url: 'invalid_source_url',
+  invalid_registration_url: 'invalid_registration_url',
+  relative_date_unresolved: 'relative_date_unresolved',
+  date_expression_unresolved: 'date_expression_unresolved',
+  duplicate_potential: 'duplicate_potential',
+  truncated_input: 'truncated_input',
+  instruction_like_text: 'instruction_like_text',
+  safety_sensitive: 'safety_sensitive',
+  contact_invalid: 'contact_invalid',
+  cost_ambiguous: 'cost_ambiguous',
+  registration_url_ambiguous: 'registration_url_ambiguous',
+} as const;
+
+export interface ReviewFlag {
+  code: ReviewFlagCode;
+  /**
+     * Canonical server-owned text for the code.
+     * @maxLength 200
+     */
+  message: string;
+}
+
+export type DraftField = typeof DraftField[keyof typeof DraftField];
+
+
+export const DraftField = {
+  title: 'title',
+  category: 'category',
+  summary: 'summary',
+  description: 'description',
+  startAt: 'startAt',
+  endAt: 'endAt',
+  allDay: 'allDay',
+  location: 'location',
+  organizer: 'organizer',
+  contact: 'contact',
+  cost: 'cost',
+  registrationUrl: 'registrationUrl',
+  sourceUrl: 'sourceUrl',
+  tags: 'tags',
+} as const;
+
+/**
+ * A normalizer suggestion. It is not verified information and must be reviewed by a person before it can be published.
+ */
+export interface NormalizedEventDraft {
+  /**
+     * @maxLength 160
+     * @nullable
+     */
+  title: string | null;
+  category: EventCategory;
+  /**
+     * @maxLength 280
+     * @nullable
+     */
+  summary: string | null;
+  /**
+     * @maxLength 5000
+     * @nullable
+     */
+  description: string | null;
+  /** @nullable */
+  startAt: string | null;
+  /** @nullable */
+  endAt: string | null;
+  allDay: boolean;
+  /**
+     * @maxLength 200
+     * @nullable
+     */
+  location: string | null;
+  /**
+     * @maxLength 160
+     * @nullable
+     */
+  organizer: string | null;
+  /**
+     * @maxLength 200
+     * @nullable
+     */
+  contact: string | null;
+  /**
+     * @maxLength 160
+     * @nullable
+     */
+  cost: string | null;
+  /** @nullable */
+  registrationUrl: string | null;
+  /** @nullable */
+  sourceUrl: string | null;
+  /** @items.maxLength 40 */
+  tags: string[];
+  reviewFlags: ReviewFlag[];
+  changedFields: DraftField[];
+  /** @items.maxLength 300 */
+  unresolvedQuestions: string[];
+}
+
+/**
+ * Normalization metadata for one submission. Never exposed on the public event endpoints; `normalized` means only "a valid draft with no review flags", never verified or approved.
+ */
+export interface SubmissionNormalization {
+  status: NormalizationStatus;
+  /** @nullable */
+  version: string | null;
+  /**
+     * The submission timestamp the normalizer was given, not a wall-clock production time.
+     * @nullable
+     */
+  referenceTime: string | null;
+  errorCode: NormalizationErrorCode | null;
+  draft: NormalizedEventDraft | null;
+}
+
 export type SubmissionAttachmentContentType = typeof SubmissionAttachmentContentType[keyof typeof SubmissionAttachmentContentType];
 
 
@@ -244,6 +395,7 @@ export interface Submission {
   attachmentCount: number;
   duplicatePotential?: boolean;
   attachments: SubmissionAttachment[];
+  normalization: SubmissionNormalization;
 }
 
 export interface SubmissionApprovalInput {
