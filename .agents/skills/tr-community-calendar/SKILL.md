@@ -89,7 +89,13 @@ The owner specifically wants poster/photo upload with AI/OCR extraction and a ma
 - Extract candidate title, date, start/end time, location, organizer, cost, registration/contact details, category, and source/provenance where available.
 - Preserve the original uploaded source and a link/reference to it.
 - Mark uncertain or missing fields clearly; never silently guess dates, times, locations, or whether a notice is still valid.
-- AI/OCR output must be a **draft for human review**, never auto-published.
+- AI-assisted normalization should be the default for both manual submissions and OCR-extracted poster/photo submissions. Use one shared pipeline and one normalized event structure.
+- Maintain a concise, version-controlled Markdown rules file describing the canonical event format, required/optional fields, category definitions, style, date/time conventions, safe wording, and examples. The AI normalization prompt must use this file as its policy source; avoid duplicating conflicting rules in multiple places.
+- AI should fix spelling, organize and shorten rambling text without losing material facts, standardize dates/times and formatting, select a category from the allowed list, and flag missing, ambiguous, or conflicting information.
+- The AI must never invent facts, silently infer an uncertain date/time/location, create unsupported claims, or turn an unverified report into a confirmed fact. Preserve the raw submission and source alongside the normalized draft for traceability.
+- Use deterministic schema validation after AI output. Reject malformed output, keep the original submission intact, and provide a graceful manual fallback if the AI service is unavailable.
+- Default to automated normalization and validation. Route only exceptions (uncertainty, conflicting facts, required fields missing, suspected duplicates, policy/safety concerns, or low-confidence extraction) to a human review queue. Authorized humans can always edit, override, approve, or reject.
+- Do not automatically publish merely because the text is well formatted. Choose the publication gate based on source trust and risk: trusted, authoritative event sources with all required facts validated may use a configurable low-touch path; anonymous submissions and uncertain/unverified sources should remain pending until an authorized human approves them. Never let AI alone establish that an event is genuine.
 - Keep a manual form available if AI is unavailable or produces poor results.
 - Use one normalized event model and shared validation for manual and OCR paths.
 - Deduplicate conservatively using source URL and normalized title/date evidence. Flag possible duplicates for review rather than automatically deleting or merging legitimate recurring events.
@@ -116,10 +122,25 @@ For all alerts: show source, timestamp/last verified, area affected, status, and
 - Do not save an email address when confirmation delivery is not configured; the current API code is intended to refuse storage in that case.
 - Do not send real email during tests unless explicitly configured for a test environment.
 
+## Canonical event-format rules and AI-assisted normalization
+
+Create and maintain a dedicated Markdown file for the canonical posting standard (suggested path: `docs/event-format-rules.md`). Before implementing it, inspect whether a suitable rules file already exists. This file should be the single human-readable source of truth for:
+
+- Required fields and optional fields.
+- Allowed event categories and category-selection guidance.
+- Standard title, summary, and description style.
+- Pacific timezone and date/time formatting; all-day and date-to-be-announced handling.
+- How to represent unknown values without guessing.
+- Source attribution, verification status, organizer/contact, cost, registration details, and accessibility notes when supplied.
+- Examples of messy input transformed into good output, including incomplete and conflicting examples.
+- What should be flagged for human attention rather than guessed or auto-resolved.
+
+The normalization workflow should accept raw text and, where applicable, OCR text plus image/source metadata; produce a structured candidate matching the existing event schema; run deterministic validation; and return normalized fields plus a list of warnings/questions. Keep model instructions short by referencing the canonical rules content at runtime rather than allowing multiple competing rule copies. Store the original submission and source reference separately from the normalized version. Add tests for typical messy inputs, missing dates, ambiguous dates, contradictory times, recurring events, all-day events, duplicate candidates, and AI/API failure. Do not require a particular paid model provider; keep the provider replaceable and the fallback safe.
+
 ## Architecture and safety rules
 
 1. **Public reading, private administration.** Public event browsing should not require a login. Only verified/authorized administrators may publish, edit, delete, or approve records.
-2. **Human review gate.** Anonymous submissions and AI/OCR-extracted events are untrusted input. They must remain pending/draft until reviewed by an authorized admin.
+2. **AI-assisted review, risk-based human intervention.** Normalize routine submissions automatically using the version-controlled Markdown event rules and validate the structured output. Preserve raw input and provenance. Send ambiguous, conflicting, incomplete, duplicate-looking, or safety-sensitive items to an authorized human. AI formatting is not proof that an event is genuine; anonymous or unverified submissions must not become confirmed facts solely because AI processed them.
 3. **Provenance matters.** Preserve original source URL/file, submission metadata, timestamps, and verification state. Do not strip the origin of an event.
 4. **Treat public safety reports carefully.** Do not convert a single unverified user report into an official alert. Clearly label reports and moderate them.
 5. **Validate every boundary.** Reuse Zod/API schemas for request validation. Enforce file type/size limits on the server; do not trust the browser-provided content type or filename.
