@@ -512,6 +512,23 @@ describe("failures", () => {
     }
   });
 
+  it("holds a listing whose title is too short to publish", async () => {
+    // The publish contract requires a title of at least three characters.
+    // Importing a shorter one would create a draft the administrator could
+    // never publish through the existing edit endpoint.
+    const store = new MemoryStore();
+    const page = `<html><body>
+      <a href="https://calendar.google.com/calendar/render?action=TEMPLATE&amp;text=AB&amp;dates=20260301T180000Z/20260301T190000Z">Add</a>
+    </body></html>`;
+
+    const summary = await run(store, makeFetch({ page }));
+
+    assert.equal(summary.counts.held, 1);
+    assert.equal(summary.counts.imported, 0);
+    assert.deepEqual(summary.heldReasons, { title_too_short: 1 });
+    assert.equal(store.events.length, 0);
+  });
+
   it("holds one item when its ICS file fails, and still imports the others", async () => {
     const store = new MemoryStore();
     const summary = await run(

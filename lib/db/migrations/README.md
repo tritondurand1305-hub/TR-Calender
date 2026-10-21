@@ -31,6 +31,77 @@ these files.
 
 ---
 
+## Which files to apply, in which order
+
+There are two database states.
+
+**A. A fresh database.** `pnpm --filter @workspace/db run push` is
+authoritative: it creates every table, column and index from
+`lib/db/src/schema/`. The files in this directory are deltas against a database
+that already had the pre-Phase-2 schema; on a fresh database they are not
+needed, and they would no-op anyway because every statement is
+`IF NOT EXISTS`.
+
+**B. A database created by an earlier push.** Apply the files in filename
+order:
+
+| Order | File | Adds |
+| --- | --- | --- |
+| 1 | `2026-10-20-community-submissions-normalization.sql` | Five nullable/defaulted columns on `community_submissions`. |
+| 2 | `2026-10-21-community-ingestion.sql` | Four nullable provenance columns and a unique index on `community_events`; `community_ingestion_sources`; `community_ingestion_items`. |
+
+The two files are independent — they touch disjoint objects, and applying them
+out of order is harmless. The order that *is* required is **migration before
+code**: the application build that writes these columns must not run first, or
+its queries fail. See each file's "Deployment order" section.
+
+### Prerequisites
+
+- **PostgreSQL 13 or newer** for `gen_random_uuid()`, used as the primary-key
+  default of the two ingestion tables. On 12 and older, run
+  `CREATE EXTENSION IF NOT EXISTS pgcrypto;` first (not part of these files).
+- **PostgreSQL 11 or newer** so `ADD COLUMN ... NOT NULL DEFAULT` does not
+  rewrite the table and hold a long lock.
+- Confirm with `SELECT version();` before applying.
+- A backup or snapshot, per normal operational policy.
+
+### Which state is this database in?
+
+```sql
+SELECT
+  to_regclass('public.community_submissions')               AS submissions,
+  to_regclass('public.community_events')                    AS events,
+  to_regclass('public.community_ingestion_sources')         AS ingestion_sources,
+  to_regclass('public.community_ingestion_items')           AS ingestion_items;
+
+SELECT count(*) AS normalization_columns
+FROM information_schema.columns
+WHERE table_name = 'community_submissions'
+  AND column_name IN ('normalized_draft', 'normalization_status',
+                      'normalizer_version', 'normalization_reference_time',
+                      'normalization_error_code');
+
+SELECT count(*) AS ingestion_provenance_columns
+FROM information_schema.columns
+WHERE table_name = 'community_events'
+  AND column_name IN ('source_key', 'external_id', 'source_name', 'source_content_hash');
+```
+
+- All four relations present and both counts at 5 and 4 → already current.
+- Relations present, counts at 0 → a pre-Phase-2 database; apply both files.
+- `submissions` or `events` missing → empty database; use path A.
+
+### One caveat about the automatic path
+
+`scripts/post-merge.sh` runs `pnpm --filter db push`, but the workspace package
+is `@workspace/db`, so the filter matches no project and the step is expected to
+do nothing. Do not rely on it: apply the files explicitly and verify, as below.
+(Changing that script would make every merge push the whole schema
+automatically, which is a deployment decision for the repository owner, not a
+documentation fix.)
+
+---
+
 ## Applying the normalization migration
 
 ### 1. Prerequisites
@@ -185,11 +256,15 @@ the build that writes these columns ships.
 
 ### 1. Prerequisites
 
-1. The normalization migration should already be applied (it is the earlier
-   file). It is independent, but running them in filename order keeps the
-   deployed schema traceable.
-2. Take a backup or snapshot according to normal operational policy.
-3. Check for long-running transactions on `community_events`; the file uses the
+1. `community_events` exists — any database created before this branch has it.
+   If it does not, the database is empty: use the schema push instead (see
+   "Which files to apply, in which order").
+2. PostgreSQL 13+ (for `gen_random_uuid()`), 11+ for the no-rewrite
+   `ADD COLUMN` path.
+3. The normalization migration is independent of this one; applying it first is
+   only for traceability.
+4. Take a backup or snapshot according to normal operational policy.
+5. Check for long-running transactions on `community_events`; the file uses the
    same 5 s `lock_timeout`, and a timeout leaves the database unchanged.
 
 ### 2. Apply

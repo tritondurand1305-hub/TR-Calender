@@ -34,6 +34,7 @@ Module layout:
 | `src/ingestion/mapping.ts` | Validate a listing into the existing event model; compute the content hash. |
 | `src/ingestion/dedupe.ts` | Within-page duplicate removal. |
 | `src/ingestion/run.ts` | The pipeline and its failure policy. |
+| `src/ingestion/cli.ts` | Argument parsing, configuration validation and exit codes. Pure: no I/O. |
 | `src/ingestion/store.ts` | Persistence interface. |
 | `src/ingestion/drizzleStore.ts` | Drizzle implementation (not test-covered; no database here). |
 
@@ -117,88 +118,133 @@ content and their `last_verified_at`, so old data cannot look freshly checked.
 `partial` means the run completed but at least one listing was held or one row
 failed; `failed` means the source could not be read at all.
 
-## 5. Scheduling
-
-There is no scheduler in this repository and the Replit deployment target is
-`autoscale`, which has no background worker. The entry point is a one-shot
-process; schedule it externally:
+## 5. Running it, and what the exit codes mean
 
 ```bash
-# daily at 06:00 America/Vancouver, in a scheduled job with DATABASE_URL
 pnpm --filter @workspace/api-server run build
-pnpm --filter @workspace/api-server run ingest
+node artifacts/api-server/dist/ingest.mjs --help
 ```
 
-- Exit code `0` for `ok` **and** `partial` (held items are a review queue, not
-  an outage), `1` for `failed`, `2` for configuration or usage errors.
+| Exit code | Meaning | What to do |
+| --- | --- | --- |
+| `0` | Completed; at least one listing was mapped, or at least one event was imported / updated / re-verified. | Read the counts. |
+| `1` | The source could not be retrieved (`fetch_*`) or could not be parsed (`parse_*`). | Check the URL and the page; nothing was written. |
+| `2` | Configuration or usage error: bad flag, unknown source, invalid URL, missing `DATABASE_URL` for a run. | Fix the invocation; nothing was fetched or written. |
+| `3` | The page was read, but produced no usable listing (0 candidates, or every candidate held). | The markup probably changed. See §7 step 1. |
+
+`--inspect` and `--dry-run` do not import `@workspace/db` at all, so they work
+with no `DATABASE_URL` and no credential. A run (`0` arguments) refuses to
+start without `DATABASE_URL`, and that check happens before any network call.
+
 - The JSON summary on stdout is the machine-readable record; log lines go to
   stderr.
+- Errors are printed as
+  `{"mode":"error","category":"source|configuration|usage","code":"…","message":"…","exitCode":n}`.
+  The message never contains a credential or a full connection string.
 - One run is bounded: 15 s per request, 2 MB per document, 120 candidates,
   40 `.ics` fetches, 4 concurrent requests.
 - `--source-url=<url>` (or `INGESTION_SOURCE_URL`) points the adapter at another
   listing URL — a staging mirror, or a local server for an end-to-end check.
   The source key and name do not change.
 - `INGESTION_USER_AGENT` overrides the default `TRCalendarBot/1.0` user agent.
-  Set it to the operator's contact page before the first production run; the
-  value is sent to the source on every request and no URL is invented in code.
+  Set it to the operator's contact page before the first production run.
+
+### Scheduling
+
+There is no scheduler in this repository and the Replit deployment target is
+`autoscale`, which has no background worker. The entry point is a one-shot
+process; schedule it externally, for example daily at 06:00
+America/Vancouver, in a job that has `DATABASE_URL`:
+
+```bash
+pnpm --filter @workspace/api-server run ingest
+```
+
+Exit `3` from a scheduled run means "the source changed shape", not "the
+service is down"; alert on it, but do not let it retry in a tight loop.
 
 ## 6. Database
 
 `lib/db/migrations/2026-10-21-community-ingestion.sql` adds four nullable
 provenance columns and one unique index to `community_events`, plus
 `community_ingestion_sources` and `community_ingestion_items`.
-**It has not been applied.** Apply and verify it before the first real run, as
-described in `lib/db/migrations/README.md`.
+**It has not been applied.** Apply and verify it — see
+`lib/db/migrations/README.md` for the order, PostgreSQL prerequisites and the
+read-only verification queries — before the first *run*. Inspection and
+dry-run do not need it.
 
-## 7. Live verification still required
+## 7. Live verification runbook
 
-Run these in a network-enabled environment with a database available. The
-first two need no database.
+Run these in order on a network-connected host. Steps 1 and 2 need no database
+and write nothing; step 3 is the separate, deliberate decision to write.
 
 ```bash
+cd <repository root>
 pnpm --filter @workspace/api-server run build
+```
 
-# 1. What does the page actually contain?
+**Step 1 — inspect the page (read-only, no database).**
+
+```bash
 node artifacts/api-server/dist/ingest.mjs --inspect --pretty
+```
 
-# 2. What would be imported?
+Expected: `"candidates"` greater than zero, and `structuredEvents`,
+`googleCalendarLinks`, `icsLinks` or some combination of them non-zero.
+Exit `0` means the page was read and recognised.
+
+- `candidates: 0` (exit `3`) — the page loaded but nothing matched. The markup
+  differs from every assumption in §2. Do **not** add guessed selectors;
+  capture a redacted HTML sample, add it as a fixture, and extend
+  `extractCandidates` with tests first.
+- `feedHints` non-empty — the page advertises a calendar feed. That does not
+  establish a usable feed; check the publisher's intent before relying on it.
+- Exit `1` — retrieval or parse failure. Check the URL, then the response.
+
+**Step 2 — dry-run the mapping (read-only, no database).**
+
+```bash
 node artifacts/api-server/dist/ingest.mjs --dry-run --pretty
 ```
 
-Record the answer to each question:
+Expected: `counts.discovered` equal to the candidates from step 1, most of them
+`ready`, and any `held` item carrying a reason that makes sense
+(`ics_multiple_events`, `missing_start`, `ics_http_error`, …). Check two or
+three `ready` items against the real page by eye — title, date and location.
 
-1. **`structuredEvents`** — if above zero, JSON-LD is present and gives the
-   full descriptions and detail URLs. Confirm one item against the page by eye.
-2. **`googleCalendarLinks`** — if above zero, confirm a sample link really is a
-   template link (opens an event, not a calendar).
-3. **`icsLinks`** — if above zero, open a sample and check it is a
-   single-event file. If `--dry-run` reports `ics_multiple_events`, the site
-   publishes one shared feed; decide explicitly whether to ingest a feed
-   (that is a new, reviewed adapter change — the current adapter holds it).
-4. **`feedHints`** — a non-empty list means the page advertises a calendar
-   feed. That contradicts "no complete feed is established" and should be
-   checked against the publisher's intent before use.
-5. **All counts zero** — the page is structured differently from every
-   assumption above. Do **not** add guessed selectors. Capture a redacted HTML
-   sample, add it as a fixture, and extend `extractCandidates` with tests
-   first.
-6. **`--dry-run` counts** — every `ready` item should correspond to a real
-   event, and every `held` item should have a reason that makes sense.
+- Exit `0` — at least one usable listing; review the counts before step 3.
+- Exit `3` — the page was read but nothing is importable; treat it as step 1's
+  "candidates: 0" case.
+- If `icsLinks` is non-zero but every `.ics` read is `held` with
+  `ics_multiple_events`, the site publishes one shared feed. Decide explicitly
+  whether to ingest a feed; that is a new, reviewed adapter change, and the
+  current adapter holds it on purpose.
 
-Then, only after the migration is applied:
+**Step 3 — apply the migration (separate, deliberate).**
+
+Follow `lib/db/migrations/README.md`. Do not skip the verification queries.
+
+**Step 4 — the first write (deliberate).**
 
 ```bash
 node artifacts/api-server/dist/ingest.mjs --pretty
 ```
 
-and confirm in the admin Events tab that the imported events are drafts with
-"Imported from Visit Tumbler Ridge", that publishing one makes it appear on the
-public calendar with a working "From Visit Tumbler Ridge" link, and that a
-second run reports `unchanged` for every item.
+Every imported event is created with `status = "draft"`, so nothing appears on
+the public board. Expect exit `0` and `imported` equal to the `ready` count from
+step 2.
+
+**Step 5 — review and publish.**
+
+In the organizer area, Events tab: the imports are drafts labelled
+"Imported from Visit Tumbler Ridge". Publish one through Edit → Status →
+`published` → Save. It should appear on the public calendar with a "From Visit
+Tumbler Ridge" link, and the detail page should show the source attribution.
+Then run step 4 again and confirm `unchanged` for every item and `imported: 0`.
 
 ## 8. What the tests prove, and what they do not
 
-`node --test tests/*.test.ts` covers 124 cases, of which 63 are ingestion:
+`node --test tests/*.test.ts` covers 148 cases, of which 87 are ingestion:
 
 - parsing of representative listings, including entities, all-day values,
   timezone conversion, folded iCalendar lines and escaped text;
@@ -210,17 +256,34 @@ second run reports `unchanged` for every item.
   including that previously imported events are untouched;
 - protection of administrator-owned fields and of the publication decision;
 - retrieval over real HTTP against a local `node:http` server serving the same
-  fixtures, including a redirect, the `.ics` fetches and an HTTP failure.
+  fixtures, including a redirect, the `.ics` fetches and an HTTP failure;
+- the CLI contract: argument parsing, missing `DATABASE_URL` for a run, a
+  rejected source URL, and every exit code above (18 tests, no process);
+- the public contract for an imported event: an imported published row
+  serialises into `Event`, keeps `sourceName`, and does **not** carry
+  `sourceKey`, `externalId` or `sourceContentHash`.
 
 They do **not** prove that the real page parses, that a real database write
-succeeds, or that the scheduler is configured. Those are exactly the steps in
-section 7.
+succeeds, that PostgreSQL accepts the migration, that the public SQL filter
+(`status in ('published','cancelled')`) behaves as written, or that the
+scheduler is configured. Those are exactly the steps in section 7. The public
+query is SQL and no database was available, so the "drafts are not public"
+guarantee is proven by reading the route (two `inArray(status, […])`
+predicates) and by the serializer contract test, not by executing the query.
 
-**What was actually executed in this sandbox:** the built CLI was run as
-`node dist/ingest.mjs --dry-run --source-url=http://127.0.0.1:8123/events`
-against a local `node:http` server serving `listing-relative.html`. It followed
-the redirect, resolved one per-event `.ics` file, held the multi-event file and
-printed `discovered 5 / ready 4 / held 1` with the expected Vancouver times.
+**What was actually executed in this sandbox:** the built CLI was run against a
+local `node:http` server serving `listing-relative.html`, with `DATABASE_URL`
+unset for every row below:
+
+| Command | Result |
+| --- | --- |
+| `--inspect` | exit `0`, `candidates: 6` |
+| `--dry-run` | exit `0`, `discovered 5 / ready 4 / held 1` |
+| `--dry-run` on a page with links but no events | exit `3`, `discovered 0` |
+| `--inspect` on a page with no links at all | exit `1`, `parse_page_not_recognised` |
+| `--inspect` on a 404 | exit `1`, `fetch_http_error` |
+| run with `DATABASE_URL` unset | exit `2`, `missing_database_url`, before any fetch |
+
 Nothing was written to a database, and no request reached the public internet.
 
 ## 9. Next source

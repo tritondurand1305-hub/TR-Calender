@@ -20,7 +20,13 @@ import type { ResolvedListing } from "./types.ts";
 
 export const MAPPER_VERSION = "visit-tumbler-ridge-v1";
 
-/** Both are limits the existing event contract already enforces. */
+/**
+ * Limits the existing event contract already enforces. Title also has a
+ * minimum: `EventInput.title` is `minLength: 3`, so a one- or two-character
+ * title could be imported but never published through the administrator edit
+ * endpoint. Such a listing is held instead of becoming an unpublishable draft.
+ */
+const TITLE_MIN = 3;
 const TITLE_MAX = 160;
 const LOCATION_MAX = 200;
 const DESCRIPTION_MAX = 5000;
@@ -29,6 +35,7 @@ export const DEFAULT_IMPORT_CATEGORY = "Community Events";
 
 export type HoldReason =
   | "missing_title"
+  | "title_too_short"
   | "missing_start"
   | "end_before_start"
   | "missing_source_url";
@@ -115,6 +122,13 @@ export function mapListing(
   const title = trimTo(listing.title, TITLE_MAX);
   if (!title) {
     return { ok: false, reason: "missing_title", detail: "The listing has no readable title" };
+  }
+  if (title.length < TITLE_MIN) {
+    return {
+      ok: false,
+      reason: "title_too_short",
+      detail: `The listing title is shorter than the ${TITLE_MIN} characters the event contract requires`,
+    };
   }
 
   if (!listing.startAt || Number.isNaN(listing.startAt.getTime())) {

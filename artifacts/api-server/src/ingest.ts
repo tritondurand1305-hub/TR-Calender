@@ -7,9 +7,13 @@
  *                                                  result — no database needed
  *   node dist/ingest.mjs                           run against the database
  *
- * The dry-run and inspect modes never import `@workspace/db`, so they work in
- * an environment without `DATABASE_URL` and are the supported way to verify a
- * live source before allowing it to write.
+ * `--inspect` and `--dry-run` never import `@workspace/db`, so they work with
+ * no database and no credential. They are the supported way to verify a live
+ * source before allowing it to write.
+ *
+ * Argument parsing, configuration validation and exit codes live in
+ * `./ingestion/cli.ts` so they can be tested without a process, a network or a
+ * database.
  *
  * Scheduling: this process is the polling entry point. Run it from the
  * deployment's scheduler (see docs/ingestion-visit-tumbler-ridge.md); the API
@@ -17,60 +21,43 @@
  * no background worker.
  */
 
-import { failureCode, previewIngestion, runIngestion } from "./ingestion/run.ts";
+import {
+  EXIT_CONFIGURATION,
+  EXIT_OK,
+  describeError,
+  exitCodeForInspect,
+  exitCodeForPreview,
+  exitCodeForRun,
+  parseCli,
+  type CliConfig,
+} from "./ingestion/cli.ts";
+import { previewIngestion, runIngestion } from "./ingestion/run.ts";
 import {
   createVisitTumblerRidgeSource,
   inspectPage,
-  VISIT_TUMBLER_RIDGE_EVENTS_URL,
   VISIT_TUMBLER_RIDGE_KEY,
 } from "./ingestion/visitTumblerRidge.ts";
-import { DEFAULT_FETCH_POLICY, SourceFetchError, type FetchLike } from "./ingestion/http.ts";
-import { SourceParseError } from "./ingestion/types.ts";
-
-type Mode = "run" | "preview" | "inspect";
-
-interface Options {
-  mode: Mode;
-  source: string;
-  sourceUrl: string;
-  pretty: boolean;
-}
-
-function parseArguments(argv: string[]): Options {
-  let mode: Mode = "run";
-  let source = VISIT_TUMBLER_RIDGE_KEY;
-  let sourceUrl = process.env.INGESTION_SOURCE_URL ?? VISIT_TUMBLER_RIDGE_EVENTS_URL;
-  let pretty = false;
-
-  for (const argument of argv) {
-    if (argument === "--dry-run" || argument === "--preview") mode = "preview";
-    else if (argument === "--inspect") mode = "inspect";
-    else if (argument === "--pretty") pretty = true;
-    else if (argument.startsWith("--source=")) source = argument.slice("--source=".length);
-    else if (argument.startsWith("--source-url=")) sourceUrl = argument.slice("--source-url=".length);
-    else if (argument === "--help" || argument === "-h") {
-      printUsage();
-      process.exit(0);
-    } else {
-      throw new Error(`Unknown argument: ${argument}`);
-    }
-  }
-
-  return { mode, source, sourceUrl, pretty };
-}
+import type { FetchLike } from "./ingestion/http.ts";
 
 function printUsage(): void {
   console.log(`Usage: node dist/ingest.mjs [--inspect | --dry-run] [--pretty] [--source=${VISIT_TUMBLER_RIDGE_KEY}] [--source-url=<url>]
 
-  (no mode)   run the import and persist results
-  --dry-run   fetch and parse, print what would happen, persist nothing
-  --inspect   fetch the page and print structure counts only
+  (no mode)   run the import and persist results (requires DATABASE_URL)
+  --dry-run   fetch, parse and map, then print what would happen. Writes
+              nothing and needs no database.
+  --inspect   fetch the page and print structure counts only. Writes nothing.
   --pretty    indent the JSON output
   --source    source key (only ${VISIT_TUMBLER_RIDGE_KEY} is implemented)
   --source-url override the listing URL (also INGESTION_SOURCE_URL); used for
                a staging mirror or a local end-to-end check
 
-Exit codes: 0 ok/partial, 1 failed, 2 configuration or usage error.`);
+Environment: DATABASE_URL (run only), INGESTION_SOURCE_URL, INGESTION_USER_AGENT.
+
+Exit codes:
+  0  completed; at least one listing was mapped (or imported/updated/verified)
+  1  the source could not be retrieved or parsed
+  2  configuration or usage error; nothing was written
+  3  the source was read but yielded no usable listing (check the page structure)`);
 }
 
 function output(value: unknown, pretty: boolean): void {
@@ -88,42 +75,47 @@ function logger() {
   };
 }
 
-async function main(): Promise<number> {
-  const options = parseArguments(process.argv.slice(2));
-  if (options.source !== VISIT_TUMBLER_RIDGE_KEY) {
-    output({ error: `Unknown source: ${options.source}` }, options.pretty);
-    return 2;
-  }
-
+async function execute(config: CliConfig): Promise<number> {
   const fetchImpl = globalThis.fetch as unknown as FetchLike;
-  const policy = { userAgent: process.env.INGESTION_USER_AGENT ?? DEFAULT_FETCH_POLICY.userAgent };
-  const source = createVisitTumblerRidgeSource(options.sourceUrl);
+  const policy = { userAgent: config.userAgent };
+  const source = createVisitTumblerRidgeSource(config.sourceUrl);
 
-  if (options.mode === "inspect") {
+  if (config.mode === "inspect") {
     const page = await source.fetchListing({
       fetch: fetchImpl,
       policy,
       now: () => new Date(),
     });
-    output({ mode: "inspect", sourceUrl: page.url, page: inspectPage(page) }, options.pretty);
-    return 0;
+    // `extractCandidates` throws SourceParseError when the document has no
+    // links and no structured data at all; that surfaces as exit 1. A document
+    // that parses but yields no listing is the different, quieter failure:
+    // exit 3.
+    const candidates = source.extractCandidates(page);
+    output(
+      {
+        mode: "inspect",
+        sourceUrl: page.url,
+        page: { ...inspectPage(page), candidates: candidates.length },
+      },
+      config.pretty,
+    );
+    return exitCodeForInspect(candidates.length);
   }
 
-  if (options.mode === "preview") {
+  if (config.mode === "preview") {
     const preview = await previewIngestion({
       source,
       fetch: fetchImpl,
       policy,
-      logger: logger(),
     });
-    output({ mode: "preview", preview }, options.pretty);
-    return 0;
+    output({ mode: "preview", preview }, config.pretty);
+    return exitCodeForPreview(preview);
   }
 
-  // The database module throws on import without DATABASE_URL. Importing it
-  // here, only for a real run, keeps --inspect and --dry-run usable without a
-  // database or any credential.
-  const { createDrizzleIngestionStore } = await import("./ingestion/drizzleStore");
+  // The database module throws on import without DATABASE_URL; `parseCli` has
+  // already rejected a run in that case. Importing it here, only for a real
+  // run, keeps --inspect and --dry-run usable without a database.
+  const { createDrizzleIngestionStore } = await import("./ingestion/drizzleStore.ts");
   const summary = await runIngestion({
     source,
     fetch: fetchImpl,
@@ -131,25 +123,43 @@ async function main(): Promise<number> {
     store: createDrizzleIngestionStore(),
     logger: logger(),
   });
-  output({ mode: "run", summary }, options.pretty);
-  return summary.outcome === "failed" ? 1 : 0;
+  output({ mode: "run", summary }, config.pretty);
+  return exitCodeForRun(summary);
 }
 
-main()
-  .then((code) => {
-    process.exitCode = code;
-  })
-  .catch((error: unknown) => {
+async function main(): Promise<number> {
+  const parsed = parseCli(process.argv.slice(2), process.env);
+
+  if (parsed.kind === "help") {
+    printUsage();
+    return EXIT_OK;
+  }
+
+  if (parsed.kind === "error") {
+    // Errors go to stdout as JSON so a verification step that captures only
+    // stdout still sees why the command stopped. The message never contains a
+    // credential.
+    output({ mode: "error", ...parsed.error, exitCode: EXIT_CONFIGURATION }, false);
+    return EXIT_CONFIGURATION;
+  }
+
+  try {
+    return await execute(parsed.config);
+  } catch (error) {
+    const report = describeError(error);
     console.error(
       JSON.stringify({
         level: "error",
         message: "Ingestion entry point failed",
-        errorCode: failureCode(error),
-        detail: error instanceof Error ? error.message : String(error),
+        category: report.category,
+        code: report.code,
+        detail: report.message,
       }),
     );
-    // A source that cannot be read is an operational failure (1); an unknown
-    // argument or a missing database is a configuration problem (2).
-    process.exitCode =
-      error instanceof SourceFetchError || error instanceof SourceParseError ? 1 : 2;
-  });
+    return report.exitCode;
+  }
+}
+
+void main().then((code) => {
+  process.exitCode = code;
+});

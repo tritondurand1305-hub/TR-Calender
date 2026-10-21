@@ -45,14 +45,33 @@ function toIso(value: Date | null): string | null {
 }
 
 export function eventResponse(event: typeof eventsTable.$inferSelect) {
+  // Explicit mapping, not `...event`: the ingestion provenance columns
+  // (sourceKey, externalId, sourceContentHash) are internal bookkeeping and
+  // must not be handed to a response object, even though the generated schema
+  // would strip them.
   return {
-    ...event,
+    id: event.id,
+    slug: event.slug,
+    title: event.title,
+    summary: event.summary,
+    description: event.description,
+    category: event.category,
     startAt: event.startAt.toISOString(),
     endAt: toIso(event.endAt),
+    allDay: event.allDay,
+    location: event.location,
+    sourceUrl: event.sourceUrl,
+    organizer: event.organizer,
+    contact: event.contact,
+    cost: event.cost,
+    registrationUrl: event.registrationUrl,
+    tags: event.tags ?? [],
+    status: event.status,
+    isDemo: event.isDemo,
     lastVerifiedAt: toIso(event.lastVerifiedAt),
+    sourceName: event.sourceName,
     createdAt: event.createdAt.toISOString(),
     updatedAt: event.updatedAt.toISOString(),
-    tags: event.tags ?? [],
   };
 }
 
