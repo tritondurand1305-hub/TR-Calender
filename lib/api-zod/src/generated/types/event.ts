@@ -38,6 +38,8 @@ export interface Event {
   isDemo: boolean;
   /** @nullable */
   lastVerifiedAt?: Date | null;
+  /** @nullable */
+  sourceName?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

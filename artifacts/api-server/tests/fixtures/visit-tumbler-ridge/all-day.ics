@@ -1,0 +1,11 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Visit Tumbler Ridge//Events//EN
+BEGIN:VEVENT
+UID:library-closed-2026-01-22@visittumblerridge.ca
+SUMMARY:Library Closed for Staff Training
+DTSTART;VALUE=DATE:20260122
+DTEND;VALUE=DATE:20260123
+LOCATION:Tumbler Ridge Public Library
+END:VEVENT
+END:VCALENDAR

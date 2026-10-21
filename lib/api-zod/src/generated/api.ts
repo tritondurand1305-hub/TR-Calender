@@ -52,6 +52,7 @@ export const ListEventsResponseItem = zod.object({
   "status": zod.enum(['draft', 'pending', 'published', 'cancelled', 'rejected']),
   "isDemo": zod.boolean(),
   "lastVerifiedAt": zod.coerce.date().nullish(),
+  "sourceName": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -88,6 +89,7 @@ export const GetEventResponse = zod.object({
   "status": zod.enum(['draft', 'pending', 'published', 'cancelled', 'rejected']),
   "isDemo": zod.boolean(),
   "lastVerifiedAt": zod.coerce.date().nullish(),
+  "sourceName": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -352,6 +354,7 @@ export const ListAdminEventsResponseItem = zod.object({
   "status": zod.enum(['draft', 'pending', 'published', 'cancelled', 'rejected']),
   "isDemo": zod.boolean(),
   "lastVerifiedAt": zod.coerce.date().nullish(),
+  "sourceName": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -420,6 +423,7 @@ export const CreateEventResponse = zod.object({
   "status": zod.enum(['draft', 'pending', 'published', 'cancelled', 'rejected']),
   "isDemo": zod.boolean(),
   "lastVerifiedAt": zod.coerce.date().nullish(),
+  "sourceName": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -491,6 +495,7 @@ export const UpdateEventResponse = zod.object({
   "status": zod.enum(['draft', 'pending', 'published', 'cancelled', 'rejected']),
   "isDemo": zod.boolean(),
   "lastVerifiedAt": zod.coerce.date().nullish(),
+  "sourceName": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -653,6 +658,7 @@ export const ApproveSubmissionResponse = zod.object({
   "status": zod.enum(['draft', 'pending', 'published', 'cancelled', 'rejected']),
   "isDemo": zod.boolean(),
   "lastVerifiedAt": zod.coerce.date().nullish(),
+  "sourceName": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })
@@ -802,6 +808,7 @@ export const GetWeeklyDigestPreviewResponse = zod.object({
   "status": zod.enum(['draft', 'pending', 'published', 'cancelled', 'rejected']),
   "isDemo": zod.boolean(),
   "lastVerifiedAt": zod.coerce.date().nullish(),
+  "sourceName": zod.string().nullish(),
   "createdAt": zod.coerce.date(),
   "updatedAt": zod.coerce.date()
 })),

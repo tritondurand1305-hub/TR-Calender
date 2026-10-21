@@ -1,0 +1,14 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Visit Tumbler Ridge//Events//EN
+BEGIN:VEVENT
+UID:feed-event-1@visittumblerridge.ca
+SUMMARY:Feed Event One
+DTSTART;TZID=America/Vancouver:20260110T100000
+END:VEVENT
+BEGIN:VEVENT
+UID:feed-event-2@visittumblerridge.ca
+SUMMARY:Feed Event Two
+DTSTART;TZID=America/Vancouver:20260111T100000
+END:VEVENT
+END:VCALENDAR

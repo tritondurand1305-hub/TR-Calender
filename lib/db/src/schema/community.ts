@@ -34,6 +34,14 @@ export const eventsTable = pgTable(
     status: text("status").notNull().default("draft"),
     isDemo: boolean("is_demo").notNull().default(false),
     lastVerifiedAt: timestamp("last_verified_at", { withTimezone: true }),
+    // Import provenance. Null for events created by an administrator or
+    // approved from a submission. Set only by the ingestion pipeline, which
+    // uses (sourceKey, externalId) as the deduplication key and
+    // sourceContentHash to tell an unchanged listing from a changed one.
+    sourceKey: text("source_key"),
+    externalId: text("external_id"),
+    sourceName: text("source_name"),
+    sourceContentHash: text("source_content_hash"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -41,7 +49,15 @@ export const eventsTable = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (table) => [uniqueIndex("community_events_slug_idx").on(table.slug)],
+  (table) => [
+    uniqueIndex("community_events_slug_idx").on(table.slug),
+    // PostgreSQL treats NULLs as distinct, so events without provenance
+    // (manual events) never collide here.
+    uniqueIndex("community_events_source_ref_idx").on(
+      table.sourceKey,
+      table.externalId,
+    ),
+  ],
 );
 
 export const insertEventSchema = createInsertSchema(eventsTable).omit({
@@ -245,3 +261,83 @@ export const insertEmailDeliverySchema = createInsertSchema(
 });
 export type InsertEmailDelivery = z.infer<typeof insertEmailDeliverySchema>;
 export type EmailDelivery = typeof emailDeliveriesTable.$inferSelect;
+
+/**
+ * Health of one ingestion source, updated once per run.
+ *
+ * A failed run writes status/lastFailureAt/lastErrorCode here and nothing
+ * else: imported events keep their previous content and lastVerifiedAt, so a
+ * broken source is visible without old data pretending to be fresh.
+ */
+export const ingestionSourcesTable = pgTable(
+  "community_ingestion_sources",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceKey: text("source_key").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    // idle | ok | partial | failed
+    status: text("status").notNull().default("idle"),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+    lastSuccessAt: timestamp("last_success_at", { withTimezone: true }),
+    lastFailureAt: timestamp("last_failure_at", { withTimezone: true }),
+    lastErrorCode: text("last_error_code"),
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    lastRunSummary: jsonb("last_run_summary").$type<unknown>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("community_ingestion_sources_key_idx").on(table.sourceKey),
+  ],
+);
+
+export const insertIngestionSourceSchema = createInsertSchema(
+  ingestionSourcesTable,
+).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertIngestionSource = z.infer<typeof insertIngestionSourceSchema>;
+export type IngestionSource = typeof ingestionSourcesTable.$inferSelect;
+
+/**
+ * One row per listing seen in a source, whatever happened to it. This is where
+ * a listing is "held for review": when required fields cannot be read, the
+ * parsed payload is stored here with outcome `held` and a reason code, and no
+ * event is written.
+ */
+export const ingestionItemsTable = pgTable(
+  "community_ingestion_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceKey: text("source_key").notNull(),
+    externalId: text("external_id").notNull(),
+    // imported | updated | unchanged | held | skipped
+    outcome: text("outcome").notNull(),
+    reasonCode: text("reason_code"),
+    sourceUrl: text("source_url"),
+    payload: jsonb("payload").$type<unknown>(),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("community_ingestion_items_ref_idx").on(
+      table.sourceKey,
+      table.externalId,
+    ),
+  ],
+);
+
+export const insertIngestionItemSchema = createInsertSchema(
+  ingestionItemsTable,
+).omit({ id: true, firstSeenAt: true, lastSeenAt: true, updatedAt: true });
+export type InsertIngestionItem = z.infer<typeof insertIngestionItemSchema>;
+export type IngestionItem = typeof ingestionItemsTable.$inferSelect;

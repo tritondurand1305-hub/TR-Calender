@@ -9,6 +9,8 @@ _Replace the heading above with the project's name, and this line with one sente
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
+- `pnpm --filter @workspace/api-server run build && node artifacts/api-server/dist/ingest.mjs --dry-run` — preview the Visit Tumbler Ridge import without a database
+- `node artifacts/api-server/dist/ingest.mjs` — run the import (needs `DATABASE_URL`); schedule it externally
 - Required env: `DATABASE_URL` — Postgres connection string
 
 ## Stack

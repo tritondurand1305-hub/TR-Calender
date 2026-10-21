@@ -15,7 +15,12 @@ async function buildAll() {
   await rm(distDir, { recursive: true, force: true });
 
   await esbuild({
-    entryPoints: [path.resolve(artifactDir, "src/index.ts")],
+    // index.ts is the API server; ingest.ts is the polling entry point run by
+    // the deployment scheduler. Two entries, one bundle configuration.
+    entryPoints: [
+      path.resolve(artifactDir, "src/index.ts"),
+      path.resolve(artifactDir, "src/ingest.ts"),
+    ],
     platform: "node",
     bundle: true,
     format: "esm",

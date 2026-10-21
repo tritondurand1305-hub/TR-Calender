@@ -666,6 +666,9 @@ components:
         status: { $ref: "#/components/schemas/EventStatus" }
         isDemo: { type: boolean }
         lastVerifiedAt: { type: ["string", "null"], format: date-time }
+        # Display name of the public source an event was imported from. Null
+        # for events created by an administrator or approved from a submission.
+        sourceName: { type: ["string", "null"] }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     EventInput:

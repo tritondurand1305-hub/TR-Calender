@@ -1,0 +1,17 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Visit Tumbler Ridge//Events//EN
+CALSCALE:GREGORIAN
+BEGIN:VEVENT
+UID:winter-storytime-2026-01-20@visittumblerridge.ca
+DTSTAMP:20260102T120000Z
+SUMMARY:Winter Storytime
+DESCRIPTION:Stories and songs for ages 0-5.\nDrop in\, no registrati
+ on needed.
+LOCATION:Tumbler Ridge Public Library\, 100 Founders Way
+DTSTART;TZID=America/Vancouver:20260120T103000
+DTEND;TZID=America/Vancouver:20260120T113000
+URL:https://www.visittumblerridge.ca/events/winter-storytime
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR

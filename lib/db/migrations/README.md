@@ -27,6 +27,7 @@ these files.
 | File | Purpose |
 | --- | --- |
 | `2026-10-20-community-submissions-normalization.sql` | Adds five additive columns to `community_submissions` for the Phase 2 normalizer. **Not applied.** |
+| `2026-10-21-community-ingestion.sql` | Adds four provenance columns and a unique index to `community_events`, plus `community_ingestion_sources` and `community_ingestion_items`. **Not applied.** |
 
 ---
 
@@ -177,7 +178,79 @@ schema push should report no changes for these five columns.
 
 ---
 
-## Rollback
+## Applying the ingestion migration
+
+Order matters only in one direction: the migration must be applied **before**
+the build that writes these columns ships.
+
+### 1. Prerequisites
+
+1. The normalization migration should already be applied (it is the earlier
+   file). It is independent, but running them in filename order keeps the
+   deployed schema traceable.
+2. Take a backup or snapshot according to normal operational policy.
+3. Check for long-running transactions on `community_events`; the file uses the
+   same 5 s `lock_timeout`, and a timeout leaves the database unchanged.
+
+### 2. Apply
+
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -f lib/db/migrations/2026-10-21-community-ingestion.sql
+```
+
+### 3. Verify (read-only)
+
+```sql
+-- Four nullable columns, one unique index.
+SELECT column_name, data_type, is_nullable, column_default
+FROM information_schema.columns
+WHERE table_name = 'community_events'
+  AND column_name IN ('source_key', 'external_id', 'source_name', 'source_content_hash')
+ORDER BY column_name;
+
+-- Expected: four rows, all text, all nullable, no default.
+
+SELECT indexname, indexdef
+FROM pg_indexes
+WHERE tablename = 'community_events'
+ORDER BY indexname;
+
+-- Expected: community_events_slug_idx (unique, slug) and
+--           community_events_source_ref_idx (unique, source_key, external_id).
+
+SELECT table_name
+FROM information_schema.tables
+WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+  AND table_name IN ('community_ingestion_sources', 'community_ingestion_items')
+ORDER BY table_name;
+
+-- Expected: both tables.
+
+-- After the first real run only:
+SELECT source_key, status, last_attempt_at, last_success_at, last_failure_at,
+       last_error_code, consecutive_failures
+FROM community_ingestion_sources;
+```
+
+Existing rows need no backfill: the four new event columns are nullable, so
+every manually created or submission-approved event simply has `NULL`
+provenance and is invisible to the importer's lookups. The two new tables start
+empty.
+
+### 4. Rollback
+
+**Leave the columns and tables in place and redeploy the previous build.** The
+change is additive, older code ignores the new columns, and the tables hold the
+record of what was imported, which is worth keeping. Dropping
+`community_ingestion_items` or the provenance columns would erase that record
+and cause the next run to re-import every listing as a new draft. If removal is
+genuinely required, treat it as a separate reviewed change that first archives
+both tables, exactly as described in the generic rollback section below.
+
+---
+
+## Rollback (normalization migration)
 
 **Preferred rollback: deploy the previous application version and leave the
 columns in place.**
@@ -223,6 +296,20 @@ file. The five definitions and their SQL equivalents:
 
 No other column, index (`community_submissions_reference_idx`) or constraint is
 touched by the migration.
+
+The ingestion migration follows the same rule for `community_events`:
+
+| Drizzle | SQL | Nullable |
+| --- | --- | --- |
+| `text("source_key")` | `text` | yes |
+| `text("external_id")` | `text` | yes |
+| `text("source_name")` | `text` | yes |
+| `text("source_content_hash")` | `text` | yes |
+| `uniqueIndex("community_events_source_ref_idx")` | `CREATE UNIQUE INDEX ... USING btree (source_key, external_id)` | — |
+
+`community_ingestion_sources` and `community_ingestion_items` mirror the Drizzle
+definitions in the same file, including their unique indexes on `source_key`
+and `(source_key, external_id)`.
 
 ---
 

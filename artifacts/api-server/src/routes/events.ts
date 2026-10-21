@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import {
   and,
   asc,
@@ -36,6 +35,7 @@ import {
 } from "@workspace/api-zod";
 import { configuredAdminEmails, isAdministrator, requireAdmin } from "../middlewares/adminAuth";
 import { getEmailDeliveryStatus } from "../lib/emailDelivery";
+import { slugFor } from "../lib/slug";
 
 const router: IRouter = Router();
 const VANCOUVER_TIMEZONE = "America/Vancouver";
@@ -67,17 +67,6 @@ function vancouverDate(date: Date): string {
 
 function isoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
-}
-
-function slugFor(title: string): string {
-  const base = title
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase("en-CA")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 80);
-  return `${base || "event"}-${randomBytes(3).toString("hex")}`;
 }
 
 function escapeLike(value: string): string {

@@ -34,6 +34,7 @@ import { requireAdmin } from "../middlewares/adminAuth";
 import { EVENT_INTERVAL_ERROR, endsBeforeStart } from "../lib/eventInterval";
 import { ObjectNotFoundError, ObjectStorageService } from "../lib/objectStorage";
 import { rateLimit } from "../lib/rateLimit";
+import { slugFor } from "../lib/slug";
 import { normalizeAndStore, readStoredNormalization } from "../lib/submissionNormalization";
 import {
   detectUploadContentType,
@@ -51,17 +52,6 @@ const submissionLimit = rateLimit({
 
 function tokenHash(token: string): string {
   return createHash("sha256").update(token).digest("hex");
-}
-
-function slugFor(title: string): string {
-  const base = title
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase("en-CA")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 80);
-  return `${base || "event"}-${randomBytes(3).toString("hex")}`;
 }
 
 export function submissionResponse(
