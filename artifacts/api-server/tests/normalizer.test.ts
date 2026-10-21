@@ -1,7 +1,9 @@
 /**
  * Behavioural tests for the Phase 1 normaliser.
  *
- * Run with: node --test tests/
+ * Run from `artifacts/api-server` with: node --test tests/*.test.ts
+ * (`npm test` runs the same command.) A bare directory argument is not a valid
+ * test selector on every supported Node version, so the shell expands the glob.
  * Requires Node >= 22.18 (native TypeScript type stripping); the project's
  * Replit runtime is Node 24. No test framework or dependency is used.
  */
@@ -10,7 +12,10 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   EVENT_CATEGORIES,
+  REVIEW_FLAG_MESSAGES,
+  REVIEW_FLAG_QUESTIONS,
   normalizeEvent,
+  rulesNormalizer,
   runNormalization,
   validateDraft,
 } from "../src/lib/normalizer/index.ts";
@@ -54,7 +59,7 @@ describe("rules-v1 normaliser", () => {
     assert.equal(result.status, "normalized");
     assert.equal(result.error, null);
     assert.equal(result.normalizerVersion, "rules-v1");
-    assert.equal(result.producedAt, REFERENCE_TIME);
+    assert.equal(result.referenceTime, REFERENCE_TIME);
 
     const draft = result.draft;
     assert.ok(draft);
@@ -315,7 +320,7 @@ describe("rules-v1 normaliser", () => {
     const shifted = await normalizeEvent(input, {
       referenceTime: "2026-10-21T09:30:00.000Z",
     });
-    assert.equal(shifted.producedAt, "2026-10-21T09:30:00.000Z");
+    assert.equal(shifted.referenceTime, "2026-10-21T09:30:00.000Z");
     assert.deepEqual(shifted.draft, first.draft);
     assert.deepEqual(shifted.reviewFlags, first.reviewFlags);
   });
@@ -372,6 +377,17 @@ describe("rules-v1 normaliser", () => {
       validateDraft({ ...draft, registrationUrl: "javascript:alert(1)" }).ok,
       false,
     );
+
+    // Impossible calendar dates and out-of-range years are rejected by the
+    // same round-trip parser the producer uses. `endAt: null` isolates the
+    // timestamp check from the end-before-start interval rule.
+    for (const startAt of [
+      "2026-02-30T10:00:00.000Z",
+      "0001-01-01T00:00:00.000Z",
+      "9999-12-31T23:59:59.999Z",
+    ]) {
+      assert.equal(validateDraft({ ...draft, startAt, endAt: null }).ok, false);
+    }
   });
 
   it("preserves uncertainty and conditions verbatim", async () => {
@@ -402,7 +418,7 @@ describe("rules-v1 normaliser", () => {
   it("requires a valid reference time", async () => {
     const result = await normalizeEvent(baseInput(), { referenceTime: "not-a-date" });
     assert.equal(result.status, "invalid_input");
-    assert.equal(result.producedAt, null);
+    assert.equal(result.referenceTime, null);
   });
 
   it("flags a title that is too short", async () => {
@@ -454,5 +470,245 @@ describe("rules-v1 normaliser", () => {
     const messages = result.reviewFlags.map((flag) => flag.message).join(" ");
     assert.ok(!messages.includes(privateValue));
     assert.equal(result.error, null);
+  });
+
+  it("never treats a compound word or a subgroup offer as free admission", async () => {
+    const smokeFree = await normalize(
+      baseInput({ details: "This is a smoke-free event. Tickets are $10." }),
+    );
+    assert.equal(smokeFree.draft?.cost, "$10");
+    assert.ok(!codes(smokeFree).includes("cost_unclear"));
+
+    const partial = await normalize(
+      baseInput({ details: "Admission is $10; free for children under 5." }),
+    );
+    assert.equal(partial.draft?.cost, "$10");
+
+    const freeParking = await normalize(
+      baseInput({ details: "Free parking for families at the arena." }),
+    );
+    assert.equal(freeParking.draft?.cost, null);
+    assert.ok(codes(freeParking).includes("cost_unclear"));
+
+    const students = await normalize(
+      baseInput({ details: "Tickets are $10; free for students." }),
+    );
+    assert.equal(students.draft?.cost, "$10");
+  });
+
+  it("does not turn unrelated dollar amounts into admission prices", async () => {
+    const goal = await normalize(
+      baseInput({ details: "Help us raise $5000 for the new playground." }),
+    );
+    assert.equal(goal.draft?.cost, null);
+    assert.ok(codes(goal).includes("cost_unclear"));
+
+    const discount = await normalize(
+      baseInput({ details: "Use this coupon for $15 off your first visit." }),
+    );
+    assert.equal(discount.draft?.cost, null);
+    assert.ok(codes(discount).includes("cost_unclear"));
+
+    const prize = await normalize(baseInput({ details: "The prize is a $250 gift card." }));
+    assert.equal(prize.draft?.cost, null);
+    assert.ok(codes(prize).includes("cost_unclear"));
+  });
+
+  it("flags conflicting cost statements instead of guessing", async () => {
+    const contradiction = await normalize(
+      baseInput({ details: "Admission is free. Tickets are $10." }),
+    );
+    assert.equal(contradiction.draft?.cost, null);
+    assert.ok(codes(contradiction).includes("cost_ambiguous"));
+
+    const twoPrices = await normalize(
+      baseInput({ details: "Tickets are $10 for adults and $5 for children." }),
+    );
+    assert.equal(twoPrices.draft?.cost, null);
+    assert.ok(codes(twoPrices).includes("cost_ambiguous"));
+  });
+
+  it("keeps donations distinct from fixed prices", async () => {
+    const priced = await normalize(
+      baseInput({ details: "Tickets are $20 at the door. Donations welcome." }),
+    );
+    assert.equal(priced.draft?.cost, "$20");
+
+    const donation = await normalize(baseInput({ details: "Admission is by donation." }));
+    assert.equal(donation.draft?.cost, "By donation");
+  });
+
+  it("evaluates each contact detail on its own local context", async () => {
+    const personal = await normalize(baseInput({ details: "Call me at 250-555-1234." }));
+    assert.equal(personal.draft?.contact, null);
+    assert.ok(codes(personal).includes("contact_not_public"));
+
+    const mixed = await normalize(
+      baseInput({ details: "Contact Jane at jane@example.org. My cell is 250-555-1234." }),
+    );
+    assert.equal(mixed.draft?.contact, "jane@example.org");
+    assert.ok(codes(mixed).includes("contact_not_public"));
+
+    const cell = await normalize(baseInput({ details: "My cell is 250-555-1234." }));
+    assert.equal(cell.draft?.contact, null);
+    assert.ok(codes(cell).includes("contact_not_public"));
+  });
+
+  it("drops an over-long contact detail with a flag instead of failing", async () => {
+    const longEmail = `${"a".repeat(190)}@example.org`;
+    const result = await normalize(
+      baseInput({ details: `Contact the organizer at ${longEmail} for details.` }),
+    );
+
+    assert.equal(result.status, "needs_review");
+    assert.equal(result.draft?.contact, null);
+    assert.ok(codes(result).includes("contact_invalid"));
+    assert.ok(!result.reviewFlags.map((flag) => flag.message).join(" ").includes(longEmail));
+  });
+
+  it("rejects impossible and out-of-range timestamps from a provider", async () => {
+    for (const startAt of [
+      "2026-02-30T10:00:00.000Z",
+      "0001-01-01T00:00:00.000Z",
+      "9999-12-31T23:59:59.999Z",
+    ]) {
+      const provider: NormalizerProvider = {
+        id: "test-impossible-date",
+        version: "test-impossible-date-1",
+        async normalize(input, context) {
+          const draft = await rulesNormalizer.normalize(input, context);
+          return { ...draft, startAt, endAt: null, reviewFlags: [], changedFields: [] };
+        },
+      };
+
+      const result = await runNormalization(provider, baseInput(), {
+        referenceTime: REFERENCE_TIME,
+      });
+      assert.equal(result.status, "failed");
+      assert.equal(result.error?.code, "invalid_provider_output");
+      assert.equal(result.draft, null);
+    }
+  });
+
+  it("replaces provider flag messages and questions with canonical text", async () => {
+    const injected = "Call 250-555-1234, jane@example.org, sk_live_secret";
+    const provider: NormalizerProvider = {
+      id: "test-flags",
+      version: "test-flags-1",
+      async normalize(input, context) {
+        const draft = await rulesNormalizer.normalize(input, context);
+        return {
+          ...draft,
+          reviewFlags: [{ code: "cost_unclear", message: injected }],
+          unresolvedQuestions: [injected],
+        };
+      },
+    };
+
+    const result = await runNormalization(provider, baseInput(), {
+      referenceTime: REFERENCE_TIME,
+    });
+
+    assert.equal(result.status, "needs_review");
+    assert.equal(result.reviewFlags[0]?.message, REVIEW_FLAG_MESSAGES.cost_unclear);
+    assert.deepEqual(result.draft?.unresolvedQuestions, [REVIEW_FLAG_QUESTIONS.cost_unclear]);
+    const serialised = JSON.stringify(result);
+    assert.ok(!serialised.includes(injected));
+    assert.ok(!serialised.includes("sk_live_secret"));
+  });
+
+  it("does not misattribute an information link as the registration link", async () => {
+    const result = await normalize(
+      baseInput({ details: "Register at the hall. More info: https://example.org/info" }),
+    );
+    assert.equal(result.draft?.registrationUrl, null);
+    assert.ok(codes(result).includes("registration_url_ambiguous"));
+  });
+
+  it("reads a registration link placed on the line after its label", async () => {
+    const result = await normalize(
+      baseInput({ details: "Register: \nhttps://example.org/rsvp\nAll ages welcome." }),
+    );
+    assert.equal(result.draft?.registrationUrl, "https://example.org/rsvp");
+    assert.ok(!codes(result).includes("registration_url_ambiguous"));
+  });
+
+  it("flags an unparsed date expression even when a structured date exists", async () => {
+    const result = await normalize(
+      baseInput({ details: "Join us on October 24 for the fall fair." }),
+    );
+
+    assert.equal(result.draft?.startAt, "2026-11-07T17:00:00.000Z");
+    assert.ok(codes(result).includes("date_expression_unresolved"));
+    assert.ok(result.draft?.unresolvedQuestions.some((question) => /date/i.test(question)));
+
+    const flag = result.reviewFlags.find((entry) => entry.code === "date_expression_unresolved");
+    assert.ok(flag);
+    assert.ok(!/conflict|contradict|mismatch/i.test(flag.message));
+  });
+
+  it("does not read a fundraising split as a date expression", async () => {
+    const result = await normalize(
+      baseInput({ details: "Join the 50/50 draw at the arena. Tickets are $5." }),
+    );
+
+    assert.ok(!codes(result).includes("date_expression_unresolved"));
+    assert.equal(result.draft?.cost, "$5");
+  });
+
+  it("preserves acronyms and brand casing in all-caps titles", async () => {
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      ["LEGO BUILDERS CLUB", "LEGO Builders Club"],
+      ["COVID-19 UPDATE", "COVID-19 Update"],
+      ["2SLGBTQ+ PRIDE NIGHT", "2SLGBTQ+ Pride Night"],
+      ["STEM CAMP", "STEM Camp"],
+      ["A&B CRAFT SALE", "A&B Craft Sale"],
+    ];
+
+    for (const [title, expected] of cases) {
+      const result = await normalize(baseInput({ title }));
+      assert.equal(result.draft?.title, expected, title);
+    }
+  });
+
+  it("honours an already-aborted signal before doing any work", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await normalizeEvent(baseInput(), {
+      referenceTime: REFERENCE_TIME,
+      signal: controller.signal,
+    });
+
+    assert.equal(result.status, "cancelled");
+    assert.equal(result.draft, null);
+    assert.equal(result.error?.code, "cancelled");
+    assert.equal(result.referenceTime, null);
+    assert.deepEqual(result.reviewFlags, []);
+  });
+
+  it("discards provider output when cancelled during execution", async () => {
+    const controller = new AbortController();
+    let abortedWhenCalled: boolean | undefined;
+
+    const provider: NormalizerProvider = {
+      id: "test-cancel",
+      version: "test-cancel-1",
+      async normalize(input, context) {
+        abortedWhenCalled = context.signal?.aborted;
+        controller.abort();
+        return rulesNormalizer.normalize(input, context);
+      },
+    };
+
+    const result = await runNormalization(provider, baseInput(), {
+      referenceTime: REFERENCE_TIME,
+      signal: controller.signal,
+    });
+
+    assert.equal(abortedWhenCalled, false);
+    assert.equal(result.status, "cancelled");
+    assert.equal(result.error?.code, "cancelled");
+    assert.equal(result.draft, null);
   });
 });

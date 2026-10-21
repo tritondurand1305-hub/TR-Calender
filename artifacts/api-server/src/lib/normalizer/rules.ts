@@ -27,6 +27,8 @@ import {
   LIMITS,
   NORMALIZER_VERSION,
   REVIEW_FLAG_CODES,
+  REVIEW_FLAG_MESSAGES,
+  REVIEW_FLAG_QUESTIONS,
   canonicalIsoTimestamp,
   isValidHttpUrl,
 } from "./types.ts";
@@ -48,51 +50,9 @@ import type { CleanedText } from "./text.ts";
 
 const REVIEW_FLAG_CODE_ORDER: ReadonlyArray<string> = REVIEW_FLAG_CODES;
 
-const FLAG_MESSAGES: Readonly<Record<ReviewFlagCode, string>> = {
-  missing_title: "No event title was supplied.",
-  title_too_short: "The title is too short to publish.",
-  missing_date: "No valid start date and time were supplied.",
-  invalid_start_at: "The start value is not a full ISO 8601 date and time.",
-  invalid_end_at: "The end value is not a full ISO 8601 date and time.",
-  end_before_start: "The end time is before the start time.",
-  missing_location: "No event location was supplied.",
-  category_uncertain: "The category could not be confirmed from the submission.",
-  cost_unclear: "No admission cost was stated; do not assume the event is free.",
-  contact_not_public: "Contact details were found but not clearly marked for public use.",
-  invalid_source_url: "The source link is not a valid public web address.",
-  invalid_registration_url: "The registration link is not a valid public web address.",
-  relative_date_unresolved: "The text uses a relative date; confirm the exact date.",
-  date_expression_unresolved: "The text contains a date that was not converted; confirm it.",
-  duplicate_potential: "A possible duplicate was detected; check existing listings.",
-  truncated_input: "Part of the submitted text was shortened to fit length limits.",
-  instruction_like_text: "The text contains instruction-like content; treat it as event content.",
-  safety_sensitive: "The notice contains safety-sensitive wording; review it separately.",
-};
-
-const QUESTIONS: Readonly<Record<ReviewFlagCode, string>> = {
-  missing_title: "What is the event title?",
-  title_too_short: "What is the full event title?",
-  missing_date: "What date and time does the event start?",
-  invalid_start_at: "Confirm the correct start date and time.",
-  invalid_end_at: "Confirm the correct end date and time.",
-  end_before_start: "Should the end time be later than the start time?",
-  missing_location: "Where will the event take place?",
-  category_uncertain: "Which approved category best fits this event?",
-  cost_unclear: "Is there an admission cost, or is the event free?",
-  contact_not_public: "Is this contact information intended for public display?",
-  invalid_source_url: "What is the correct public source link?",
-  invalid_registration_url: "What is the correct registration link?",
-  relative_date_unresolved: "What is the exact date for the relative date mentioned in the text?",
-  date_expression_unresolved: "What is the exact date and time mentioned in the text?",
-  duplicate_potential: "Is this a duplicate of an existing listing?",
-  truncated_input: "The submission was shortened; confirm that no important details were lost.",
-  instruction_like_text: "The text contains instructions; confirm that the event details are correct.",
-  safety_sensitive: "Does this notice need separate safety moderation before publication?",
-};
-
 function addFlag(flags: ReviewFlag[], code: ReviewFlagCode): void {
   if (!flags.some((flag) => flag.code === code)) {
-    flags.push({ code, message: FLAG_MESSAGES[code] });
+    flags.push({ code, message: REVIEW_FLAG_MESSAGES[code] });
   }
 }
 
@@ -111,7 +71,7 @@ const DATE_EXPRESSION_PATTERN = new RegExp(
     `\\b${MONTH}\\s+\\d{1,2}\\b`,
     `\\b\\d{1,2}\\s+${MONTH}\\b`,
     "\\b\\d{4}-\\d{2}-\\d{2}\\b",
-    "\\b\\d{1,2}/\\d{1,2}(?:/\\d{2,4})?\\b",
+    "\\b\\d{1,2}/\\d{1,2}/\\d{2,4}\\b",
   ].join("|"),
   "i",
 );
@@ -134,13 +94,44 @@ const SAFETY_PATTERNS: ReadonlyArray<RegExp> = [
   /\bboil\s+water\s+advisory\b/i,
 ];
 
-const FREE_PATTERNS: ReadonlyArray<RegExp> = [
-  /\b(?:admission|entry|entrance|tickets?|registration)\b[^.\n]{0,24}\b(?:is|are|will be)?\s*(?:free|no charge|no cost)\b/i,
-  /\b(?:free|no[- ]charge|no[- ]cost)\b[^.\n]{0,24}\b(?:admission|entry|entrance|event|workshop|concert|show|class|drop[- ]in|for (?:kids|children|families|seniors))\b/i,
-  /^\s*(?:free|no charge|no cost)\s*$/im,
-];
+/** Sentences (and lines) are the unit of cost and contact context. */
+const SEGMENT_SPLIT = /(?<=[.!?;])\s+|\n+/;
 
-const PRICE_PATTERN = /\$\s?\d{1,4}(?:\.\d{2})?/;
+/** Words that make a dollar amount an admission price. */
+const ADMISSION_COST_CONTEXT =
+  /\b(?:admission|entry|entrance|tickets?|cover(?:\s+charge)?|at\s+the\s+door|prices?|priced|costs?|fees?|per\s+(?:person|ticket|guest|child|adult)|general\s+admission|advance|admits?|passes?)\b/i;
+
+/** Words that make a dollar amount something other than an admission price. */
+const NON_ADMISSION_COST_CONTEXT =
+  /\b(?:fundrais(?:er|ing)|proceeds?|raise|raised|raising|goal|donat(?:e|ed|ing|ion|ions)?|prizes?|gift\s+cards?|vouchers?|value|worth|save|savings|discount|coupons?|off|rebate|refund|deposit|invoice|budget|grant|raffle|50\/50|split\s+the\s+pot|suggested|sliding\s+scale|pay\s+what\s+you\s+can|parking|snacks?|drinks?|refreshments?|coffee|popcorn|hot\s+dogs?|swag|merch)\b/i;
+
+/** A dollar amount. Bare amounts are never promoted without admission context. */
+const DOLLAR_AMOUNT = /\$\s?(\d{1,4}(?:\.\d{2})?)/g;
+
+/** `free`, `no charge`, `no cost`, but not part of a hyphenated compound. */
+const FREE_CLAIM = /(?<![-\p{L}])(?:free|no[-\s]?charge|no[-\s]?cost)(?![-\p{L}])/iu;
+
+const FREE_NEGATED =
+  /\b(?:not|never|isn't|aren't|wasn't|weren't|no\s+longer)\s+(?:free|no[-\s]?charge|no[-\s]?cost)\b/i;
+
+/** "free for students" is a discount, not free admission for everyone. */
+const FREE_SUBGROUP =
+  /\b(?:free|no[-\s]?charge|no[-\s]?cost)\s+(?:for|to)\s+(?:kids?|children|youth|teens?|students?|seniors?|elders?|members?|veterans?|families|family|adults?|accompanied|under\s+\d+|ages?\s+\d+)/i;
+
+/** "free parking", "free snacks": real, but not admission. */
+const FREE_UNRELATED =
+  /\b(?:free|no[-\s]?charge|no[-\s]?cost)\s+(?:parking|transit|shuttle|wifi|wi-fi|coffee|tea|snacks?|food|drinks?|refreshments?|popcorn|hot\s+dogs?|childcare|child\s+care|babysitting|swag|t-shirts?|gifts?|samples?|merch)\b/i;
+
+/** `Admission is free`, `Tickets: free`. The copula or colon is required. */
+const ADMISSION_FREE_BEFORE =
+  /\b(?:admission|entry|entrance|tickets?|registration|cover|the\s+event|this\s+event|event|workshop|concert|show|class|program|drop[-\s]?in|festival|fair|market)\b[^.!?;\n]{0,24}\b(?:(?:is|are|will\s+be)\s+|:\s*)(?:free|no\s+charge|no\s+cost)\b/i;
+
+/** `Free admission`, `free event`. */
+const ADMISSION_FREE_AFTER =
+  /(?<![-\p{L}])(?:free|no\s+charge|no\s+cost)\s+(?:admission|entry|entrance|tickets?|event|workshop|concert|show|class|program|drop[-\s]?in|festival|fair|market|movie|dance|dinner|breakfast|lunch|bbq|barbecue)\b/iu;
+
+/** A segment that is only "Free". */
+const FREE_ONLY_SEGMENT = /^\s*(?:free|no\s+charge|no\s+cost)\s*[!.]?\s*$/i;
 
 const DONATION_PATTERNS: ReadonlyArray<RegExp> = [
   /\bby donation\b/i,
@@ -153,11 +144,19 @@ const PHONE_PATTERN =
   /(?<!\d)(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}\b/g;
 const CONTACT_FRAME =
   /\b(?:contact|email|e-mail|call|phone|text|questions?|info|register|rsvp|reach)\b/i;
+/** First-person wording marks a personal contact detail, not a public one. */
+const PERSONAL_CONTACT = /\b(?:me|my|mine|myself)\b/i;
 
 const URL_CANDIDATE =
   /(?<!\w)(?:https?:\/\/[^\s<>"')\]]+|(?:javascript|data|file|ftp):[^\s<>"')\]]+|www\.[^\s<>"')\]]+)/gi;
-const REGISTRATION_FRAME =
-  /\b(?:register|registration|rsvp|tickets?|sign[ -]?up|reserve)\b/i;
+const REGISTRATION_LABEL =
+  /\b(?:register|registration|rsvp|sign[ -]?up|reserve|booking|tickets?)\b/gi;
+/** `Register:` as the last thing on a line, with the link on the next line. */
+const REGISTRATION_LABEL_AT_END =
+  /(?:register|registration|rsvp|sign[ -]?up|reserve|booking|tickets?)\s*:?\s*$/i;
+/** Between a registration label and a link, these mean "not a sign-up link". */
+const INFORMATION_LABEL =
+  /\b(?:more\s+info|info|information|details|source|learn\s+more|website|webpage|event\s+page|see)\b/i;
 
 const HASHTAG_PATTERN = /#([\p{L}\p{N}_-]{1,40})/gu;
 
@@ -332,53 +331,147 @@ function combineBody(input: NormalizerInput): CleanedText {
 /* Extraction                                                                  */
 /* -------------------------------------------------------------------------- */
 
-function extractCost(text: string): string | null {
-  for (const pattern of FREE_PATTERNS) {
-    if (pattern.test(text)) return "Free";
+/**
+ * Classify a segment's free/charge wording.
+ *
+ * `admission` means the whole event is free. `other` covers everything else
+ * (compound adjectives such as "smoke-free", unrelated freebies, discounted
+ * groups, negations). `null` means the segment says nothing about free entry.
+ */
+function classifyFree(segment: string): "admission" | "other" | null {
+  if (!FREE_CLAIM.test(segment)) return null;
+  if (FREE_NEGATED.test(segment)) return "other";
+  if (FREE_ONLY_SEGMENT.test(segment)) return "admission";
+  if (FREE_SUBGROUP.test(segment)) return "other";
+  if (FREE_UNRELATED.test(segment)) return "other";
+  if (ADMISSION_FREE_BEFORE.test(segment) || ADMISSION_FREE_AFTER.test(segment)) {
+    return "admission";
   }
-
-  const price = text.match(PRICE_PATTERN);
-  if (price) return price[0].trim();
-
-  for (const pattern of DONATION_PATTERNS) {
-    if (pattern.test(text)) return "By donation";
-  }
-
-  return null;
+  return "other";
 }
 
-function isNearFrame(text: string, index: number, frame: RegExp, distance: number): boolean {
-  const lineStart = text.lastIndexOf("\n", index) + 1;
-  const start = Math.max(lineStart, index - distance);
-  return frame.test(text.slice(start, index));
-}
+/**
+ * Extract only an explicitly stated cost.
+ *
+ * Rules (Phase 1):
+ *  - a dollar amount needs admission/ticket/entry/fee/cover context nearby;
+ *  - fundraising targets, discounts, prizes and deposits are not prices;
+ *  - "free" counts only when it describes admission for everyone;
+ *  - a fixed price plus a free subgroup keeps the price;
+ *  - two different prices, or a free claim and a fixed price together, are
+ *    ambiguous: return null and flag rather than guess.
+ */
+function extractCost(text: string, flags: ReviewFlag[]): string | null {
+  let admissionFree = false;
+  let donation = false;
+  const prices: string[] = [];
 
-function extractContact(text: string, flags: ReviewFlag[]): string | null {
-  const emails = [...text.matchAll(EMAIL_PATTERN)];
-  const phones = [...text.matchAll(PHONE_PATTERN)];
+  for (const segment of text.split(SEGMENT_SPLIT)) {
+    const trimmed = segment.trim();
+    if (!trimmed) continue;
 
-  const framedEmails = emails.filter((match) =>
-    isNearFrame(text, match.index ?? 0, CONTACT_FRAME, 80),
-  );
-  const framedPhones = phones.filter((match) =>
-    isNearFrame(text, match.index ?? 0, CONTACT_FRAME, 80),
-  );
+    if (classifyFree(trimmed) === "admission") admissionFree = true;
+    if (DONATION_PATTERNS.some((pattern) => pattern.test(trimmed))) donation = true;
 
-  if (framedEmails.length > 0 || framedPhones.length > 0) {
-    const parts: string[] = [];
-    if (framedEmails[0]) parts.push(framedEmails[0][0]);
-    if (framedPhones[0]) {
-      const withPhone = [...parts, framedPhones[0][0]].join(" | ");
-      if (withPhone.length <= LIMITS.contactMax) parts.push(framedPhones[0][0]);
+    for (const match of trimmed.matchAll(DOLLAR_AMOUNT)) {
+      const index = match.index ?? 0;
+      const before = trimmed.slice(Math.max(0, index - 48), index);
+      const after = trimmed.slice(index + match[0].length, index + match[0].length + 32);
+      const context = `${before} ${after}`;
+
+      const admissionContext =
+        ADMISSION_COST_CONTEXT.test(context) || ADMISSION_COST_CONTEXT.test(trimmed);
+      if (!admissionContext) continue;
+      if (NON_ADMISSION_COST_CONTEXT.test(context)) continue;
+
+      prices.push(`$${match[1]}`);
     }
-    const contact = parts.join(" | ");
-    return contact.length > 0 ? contact : null;
   }
 
-  if (emails.length > 0 || phones.length > 0) {
-    addFlag(flags, "contact_not_public");
+  const distinct = [...new Set(prices)];
+
+  if (distinct.length > 1 || (distinct.length === 1 && admissionFree)) {
+    addFlag(flags, "cost_ambiguous");
+    return null;
   }
+  if (distinct.length === 1) return distinct[0] as string;
+  if (admissionFree) return "Free";
+  if (donation) return "By donation";
   return null;
+}
+
+/**
+ * The context immediately before `index`, bounded by the start of the
+ * sentence and of the line. This keeps a public organizer email from making a
+ * personal phone number elsewhere in the paragraph look publishable.
+ */
+function localContext(text: string, index: number, distance: number): string {
+  const lineStart = text.lastIndexOf("\n", index) + 1;
+  let sentenceStart = 0;
+  for (const boundary of [". ", "! ", "? ", "; ", ".\n", "!\n", "?\n"]) {
+    const at = text.lastIndexOf(boundary, index - 1);
+    if (at >= 0) sentenceStart = Math.max(sentenceStart, at + boundary.length);
+  }
+  return text.slice(Math.max(lineStart, sentenceStart, index - distance), index);
+}
+
+/**
+ * Extract contact details only when each one is individually framed as public.
+ *
+ * Every phone and email is evaluated on its own local context. First-person
+ * wording ("call me", "my cell") is never promoted. An over-long value is
+ * dropped with a flag instead of failing the whole normalisation.
+ */
+function extractContact(text: string, flags: ReviewFlag[]): string | null {
+  const selected: string[] = [];
+
+  const consider = (value: string, index: number): void => {
+    const before = localContext(text, index, 80);
+    const framed = CONTACT_FRAME.test(before) && !PERSONAL_CONTACT.test(before);
+    if (!framed) {
+      addFlag(flags, "contact_not_public");
+      return;
+    }
+
+    const joined = [...selected, value].join(" | ");
+    if (joined.length > LIMITS.contactMax) {
+      addFlag(flags, "contact_invalid");
+      return;
+    }
+    selected.push(value);
+  };
+
+  for (const match of text.matchAll(EMAIL_PATTERN)) consider(match[0], match.index ?? 0);
+  for (const match of text.matchAll(PHONE_PATTERN)) consider(match[0], match.index ?? 0);
+
+  return selected.length > 0 ? selected.join(" | ") : null;
+}
+
+/**
+ * Text between the nearest registration label and a URL, or null when the URL
+ * has no registration label of its own (for example a link introduced by
+ * "More info:", or a link that merely shares a paragraph with "register").
+ *
+ * Two shapes are supported: a label on the same line (`Register: <url>`) and a
+ * label that ends the previous line (`Register:` then a URL line).
+ */
+function registrationConnector(text: string, index: number): string | null {
+  const lineStart = text.lastIndexOf("\n", index) + 1;
+  const beforeOnLine = text.slice(lineStart, index);
+
+  if (beforeOnLine.trim().length === 0) {
+    const priorText = text.slice(0, lineStart).replace(/[ \t\r\n]+$/g, "");
+    const priorLineStart = priorText.lastIndexOf("\n") + 1;
+    const priorLine = priorText.slice(priorLineStart);
+    const tail = REGISTRATION_LABEL_AT_END.exec(priorLine);
+    if (!tail || tail.index === undefined) return null;
+    return priorLine.slice(0, tail.index);
+  }
+
+  const labels = [...beforeOnLine.matchAll(REGISTRATION_LABEL)];
+  const last = labels[labels.length - 1];
+  if (!last || last.index === undefined) return null;
+  return beforeOnLine.slice(last.index + last[0].length);
 }
 
 function extractRegistrationUrl(
@@ -386,21 +479,43 @@ function extractRegistrationUrl(
   sourceUrl: string | null,
   flags: ReviewFlag[],
 ): string | null {
+  const candidates: string[] = [];
   let sawInvalid = false;
+  let sawAmbiguous = false;
 
   for (const match of text.matchAll(URL_CANDIDATE)) {
     const index = match.index ?? 0;
-    if (!isNearFrame(text, index, REGISTRATION_FRAME, 120)) continue;
-
     const candidate = match[0].replace(/[.,;:!?]+$/, "");
-    if (isValidHttpUrl(candidate)) {
-      if (candidate !== sourceUrl) return candidate;
-    } else {
+
+    const connector = registrationConnector(text, index);
+    if (connector === null) continue;
+
+    if (!isValidHttpUrl(candidate)) {
       sawInvalid = true;
+      continue;
     }
+    if (candidate === sourceUrl) continue;
+
+    const unambiguous =
+      connector.length <= 48 &&
+      !/[.!?]/.test(connector) &&
+      !INFORMATION_LABEL.test(connector);
+    if (!unambiguous) {
+      sawAmbiguous = true;
+      continue;
+    }
+    candidates.push(candidate);
   }
 
   if (sawInvalid) addFlag(flags, "invalid_registration_url");
+
+  const distinct = [...new Set(candidates)];
+  if (distinct.length === 1) return distinct[0] as string;
+  if (distinct.length > 1) {
+    addFlag(flags, "registration_url_ambiguous");
+    return null;
+  }
+  if (sawAmbiguous) addFlag(flags, "registration_url_ambiguous");
   return null;
 }
 
@@ -477,7 +592,7 @@ function buildDraft(input: NormalizerInput, referenceTime: string): NormalizedEv
   if (input.sourceUrl !== null && input.sourceUrl !== sourceUrl) changed.add("sourceUrl");
 
   const contact = extractContact(searchText, flags);
-  const cost = extractCost(searchText);
+  const cost = extractCost(searchText, flags);
   if (cost === null) addFlag(flags, "cost_unclear");
 
   const registrationUrl = extractRegistrationUrl(body.text, sourceUrl, flags);
@@ -487,7 +602,10 @@ function buildDraft(input: NormalizerInput, referenceTime: string): NormalizedEv
 
   const hasRelativeDate = RELATIVE_DATE_PATTERN.test(searchText);
   if (hasRelativeDate) addFlag(flags, "relative_date_unresolved");
-  if (startAt === null && !hasRelativeDate && DATE_EXPRESSION_PATTERN.test(searchText)) {
+  // A date-like expression in prose is never converted in Phase 1. Flag it even
+  // when a structured date exists: the reviewer is asked to confirm that the
+  // two agree. The flag never claims a conflict, because no comparison is made.
+  if (!hasRelativeDate && DATE_EXPRESSION_PATTERN.test(searchText)) {
     addFlag(flags, "date_expression_unresolved");
   }
 
@@ -504,7 +622,7 @@ function buildDraft(input: NormalizerInput, referenceTime: string): NormalizedEv
   );
 
   const unresolvedQuestions = flags
-    .map((flag) => QUESTIONS[flag.code])
+    .map((flag) => REVIEW_FLAG_QUESTIONS[flag.code])
     .filter((question, index, all) => all.indexOf(question) === index)
     .slice(0, LIMITS.questionsMax);
 

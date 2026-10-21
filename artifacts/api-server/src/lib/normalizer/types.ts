@@ -54,9 +54,70 @@ export const REVIEW_FLAG_CODES = [
   "truncated_input",
   "instruction_like_text",
   "safety_sensitive",
+  "contact_invalid",
+  "cost_ambiguous",
+  "registration_url_ambiguous",
 ] as const;
 
 export type ReviewFlagCode = (typeof REVIEW_FLAG_CODES)[number];
+
+/**
+ * Canonical, safe messages and questions for every flag code.
+ *
+ * These live with the contract (not with a provider) so that `validateDraft`
+ * can replace any provider-supplied prose with text this application owns.
+ * A future model provider must never be able to inject submitted content or
+ * personal information into the review UI through a flag message.
+ */
+export const REVIEW_FLAG_MESSAGES: Readonly<Record<ReviewFlagCode, string>> = {
+  missing_title: "No event title was supplied.",
+  title_too_short: "The title is too short to publish.",
+  missing_date: "No valid start date and time were supplied.",
+  invalid_start_at: "The start value is not a full ISO 8601 date and time.",
+  invalid_end_at: "The end value is not a full ISO 8601 date and time.",
+  end_before_start: "The end time is before the start time.",
+  missing_location: "No event location was supplied.",
+  category_uncertain: "The category could not be confirmed from the submission.",
+  cost_unclear: "No admission cost was stated; do not assume the event is free.",
+  contact_not_public: "Contact details were found but not clearly marked for public use.",
+  invalid_source_url: "The source link is not a valid public web address.",
+  invalid_registration_url: "The registration link is not a valid public web address.",
+  relative_date_unresolved: "The text uses a relative date; confirm the exact date.",
+  date_expression_unresolved:
+    "The text contains a date that was not converted; confirm the exact date and time.",
+  duplicate_potential: "A possible duplicate was detected; check existing listings.",
+  truncated_input: "Part of the submitted text was shortened to fit length limits.",
+  instruction_like_text: "The text contains instruction-like content; treat it as event content.",
+  safety_sensitive: "The notice contains safety-sensitive wording; review it separately.",
+  contact_invalid: "A contact detail could not be safely published; check the source.",
+  cost_ambiguous: "The text states more than one possible price; confirm the admission cost.",
+  registration_url_ambiguous: "A registration link could not be confirmed; check the source.",
+};
+
+export const REVIEW_FLAG_QUESTIONS: Readonly<Record<ReviewFlagCode, string>> = {
+  missing_title: "What is the event title?",
+  title_too_short: "What is the full event title?",
+  missing_date: "What date and time does the event start?",
+  invalid_start_at: "Confirm the correct start date and time.",
+  invalid_end_at: "Confirm the correct end date and time.",
+  end_before_start: "Should the end time be later than the start time?",
+  missing_location: "Where will the event take place?",
+  category_uncertain: "Which approved category best fits this event?",
+  cost_unclear: "Is there an admission cost, or is the event free?",
+  contact_not_public: "Is this contact information intended for public display?",
+  invalid_source_url: "What is the correct public source link?",
+  invalid_registration_url: "What is the correct registration link?",
+  relative_date_unresolved: "What is the exact date for the relative date mentioned in the text?",
+  date_expression_unresolved:
+    "Does the date in the text match the event date? Confirm the exact date and time.",
+  duplicate_potential: "Is this a duplicate of an existing listing?",
+  truncated_input: "The submission was shortened; confirm that no important details were lost.",
+  instruction_like_text: "The text contains instructions; confirm that the event details are correct.",
+  safety_sensitive: "Does this notice need separate safety moderation before publication?",
+  contact_invalid: "Which public contact detail should be used?",
+  cost_ambiguous: "Which price is the admission cost?",
+  registration_url_ambiguous: "What is the correct registration link?",
+};
 
 const REVIEW_FLAG_CODE_SET: ReadonlySet<string> = new Set(REVIEW_FLAG_CODES);
 
@@ -177,12 +238,23 @@ export interface NormalizerProvider {
   normalize(input: NormalizerInput, context: NormalizerContext): Promise<NormalizedEventDraft>;
 }
 
-export type NormalizationStatus = "normalized" | "needs_review" | "invalid_input" | "failed";
+/**
+ * `normalized` means "a valid draft with no review flags". It is not
+ * verification, approval or permission to publish; human review is mandatory
+ * for every result.
+ */
+export type NormalizationStatus =
+  | "normalized"
+  | "needs_review"
+  | "invalid_input"
+  | "failed"
+  | "cancelled";
 
 export type NormalizationErrorCode =
   | "invalid_input"
   | "invalid_provider_output"
-  | "internal_error";
+  | "internal_error"
+  | "cancelled";
 
 export interface NormalizationError {
   readonly code: NormalizationErrorCode;
@@ -198,10 +270,13 @@ export interface NormalizationResult {
   readonly error: NormalizationError | null;
   readonly normalizerVersion: string;
   /**
-   * Echo of the supplied reference time (canonical ISO), so identical input
-   * produces identical output. Null only when the reference time is invalid.
+   * The supplied submission/reference timestamp, canonicalised to ISO 8601.
+   *
+   * This is not a wall-clock production time: the normalizer is deterministic
+   * and never reads the clock. Null when the reference time was invalid or when
+   * the result is `cancelled` before a reference time could be read.
    */
-  readonly producedAt: string | null;
+  readonly referenceTime: string | null;
 }
 
 export const NORMALIZER_VERSION = "rules-v1";
@@ -216,9 +291,6 @@ export const NORMALIZER_VERSION = "rules-v1";
  */
 const ISO_TIMESTAMP_INPUT =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|[+-]\d{2}:\d{2})$/;
-
-/** Canonical form produced by `Date#toISOString`. */
-const ISO_TIMESTAMP_CANONICAL = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 /**
  * Validate an ISO 8601 date-time with an explicit offset and return the
@@ -267,7 +339,10 @@ export function canonicalIsoTimestamp(value: string): string | null {
 }
 
 export function isCanonicalIsoTimestamp(value: string): boolean {
-  return ISO_TIMESTAMP_CANONICAL.test(value) && !Number.isNaN(Date.parse(value));
+  // Round-trip through the same parser the producer uses. Regex + Date.parse
+  // alone would accept impossible dates (2026-02-30 rolls to 2026-03-02) and
+  // years outside the 1900-2200 data-entry range.
+  return canonicalIsoTimestamp(value) === value;
 }
 
 export function toIsoReferenceTime(value: string | Date): string | null {
@@ -479,7 +554,12 @@ export function validateDraft(value: unknown): DraftValidation {
   const tags = readTags(value.tags, issues);
   const reviewFlags = readReviewFlags(value.reviewFlags, issues);
   const changedFields = readChangedFields(value.changedFields, issues);
-  const unresolvedQuestions = readQuestions(value.unresolvedQuestions, issues);
+  // Validate the shape of provider-supplied questions, then discard the text:
+  // the review UI always receives the canonical question for each flag code.
+  readQuestions(value.unresolvedQuestions, issues);
+  const unresolvedQuestions = [
+    ...new Set(reviewFlags.map((flag) => REVIEW_FLAG_QUESTIONS[flag.code])),
+  ].slice(0, LIMITS.questionsMax);
 
   const codes = new Set<ReviewFlagCode>(reviewFlags.map((flag) => flag.code));
 
@@ -642,7 +722,11 @@ function readReviewFlags(raw: unknown, issues: string[]): ReviewFlag[] {
       continue;
     }
     seen.add(entry.code);
-    flags.push({ code: entry.code, message });
+    // The provider supplies a message only to satisfy the shape of the
+    // contract; the text is discarded and replaced with the application-owned
+    // canonical message for the code. This prevents PII or prompt-injected
+    // prose from reaching the review UI.
+    flags.push({ code: entry.code, message: REVIEW_FLAG_MESSAGES[entry.code] });
   }
   return flags;
 }

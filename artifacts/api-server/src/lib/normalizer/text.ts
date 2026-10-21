@@ -60,8 +60,8 @@ const HTML_ENTITY_PATTERN = /&(?:amp|nbsp|#39|quot|lt|gt);/g;
  * acronym path, which a length heuristic alone gets wrong.
  */
 const ACRONYMS: ReadonlySet<string> = new Set([
-  "AGM", "ATV", "BC", "BCAA", "BBQ", "CPR", "GST", "HOA", "MLA", "MP", "PST",
-  "RCMP", "SPCA", "SUV", "YMCA", "YWCA",
+  "AGM", "ATV", "BC", "BCAA", "BBQ", "COVID", "CPR", "GST", "HOA", "LEGO",
+  "LGBTQ", "MLA", "MP", "PST", "RCMP", "SPCA", "STEM", "SUV", "YMCA", "YWCA",
 ]);
 
 /** Abbreviations that should not end a sentence when summarising. */
@@ -168,10 +168,14 @@ export function collapsePunctuation(value: string): string {
  * Capitalise a string for use as a title.
  *
  * - all lowercase → title case ("kids craft fair" → "Kids Craft Fair")
- * - ALL CAPS → title case, preserving short acronyms ("BC SPCA FUNDRAISER"
+ * - ALL CAPS → title case, preserving known acronyms ("BC SPCA FUNDRAISER"
  *   → "BC SPCA Fundraiser")
  * - anything else → only the first letter is capitalised, so mixed-case
  *   brands ("iPhone", "eBay") are left alone.
+ *
+ * Tokens containing digits or symbols ("COVID-19", "2SLGBTQ+", "A&B") have no
+ * inferable casing, so they are kept exactly as supplied instead of being
+ * mangled into "Covid-19", "2Slgbtq+" or "A&b".
  */
 export function normalizeTitleCapitalization(value: string): string {
   const trimmed = value.trim();
@@ -193,6 +197,10 @@ function titleCase(value: string, preserveAcronyms: boolean): string {
     .split(/(\s+)/)
     .map((part) => {
       if (!/\p{L}/u.test(part)) return part;
+
+      // Digits and symbols make the intended casing unknowable
+      // ("COVID-19", "2SLGBTQ+", "A&B"). Keep the supplied token unchanged.
+      if (/[\d&+]/.test(part)) return part;
 
       if (preserveAcronyms) {
         const letters = part.replace(/[^\p{L}]/gu, "").toUpperCase();

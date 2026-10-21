@@ -6,10 +6,18 @@
  * the network, the filesystem or the clock: callers must pass the submission
  * timestamp as `referenceTime`.
  *
- * Failure policy: normalisation never throws across this boundary. Invalid
- * input, provider errors and provider output that fails the contract all
- * return a `NormalizationResult` with `draft: null` and a fixed, safe message.
- * Raw submission values are never copied into errors or flags.
+ * Failure policy: normalisation never throws across this boundary for ordinary
+ * JSON-shaped input. Invalid input, provider errors, invalid provider output
+ * and cancellation all return a `NormalizationResult` with `draft: null` and a
+ * fixed, safe message. Raw submission values are never copied into errors or
+ * flags.
+ *
+ * Cancellation: an already-aborted signal stops the wrapper before any work.
+ * After the provider resolves (or throws), an aborted signal discards whatever
+ * it returned and yields `status: "cancelled"`. JavaScript cannot forcibly
+ * interrupt a running provider, so providers must also observe the signal;
+ * the wrapper can only guarantee that a cancelled result is never returned as
+ * a successful draft.
  */
 
 import { rulesNormalizer } from "./rules.ts";
@@ -30,11 +38,11 @@ export * from "./types.ts";
 export { rulesNormalizer } from "./rules.ts";
 
 function failureResult(
-  status: "invalid_input" | "failed",
+  status: "invalid_input" | "failed" | "cancelled",
   code: NormalizationErrorCode,
   message: string,
   normalizerVersion: string,
-  producedAt: string | null,
+  referenceTime: string | null,
 ): NormalizationResult {
   return {
     status,
@@ -42,7 +50,7 @@ function failureResult(
     reviewFlags: [],
     error: { code, message },
     normalizerVersion,
-    producedAt,
+    referenceTime,
   };
 }
 
@@ -61,9 +69,21 @@ export async function runNormalization(
   const version =
     typeof provider?.version === "string" ? provider.version : NORMALIZER_VERSION;
 
-  const referenceTime = options ? options.referenceTime : undefined;
-  const producedAt = referenceTime === undefined ? null : toIsoReferenceTime(referenceTime);
-  if (producedAt === null) {
+  const signal = options ? options.signal : undefined;
+  if (signal?.aborted) {
+    return failureResult(
+      "cancelled",
+      "cancelled",
+      "Normalization was cancelled before it started.",
+      version,
+      null,
+    );
+  }
+
+  const suppliedReferenceTime = options ? options.referenceTime : undefined;
+  const referenceTime =
+    suppliedReferenceTime === undefined ? null : toIsoReferenceTime(suppliedReferenceTime);
+  if (referenceTime === null) {
     return failureResult(
       "invalid_input",
       "invalid_input",
@@ -75,16 +95,25 @@ export async function runNormalization(
 
   const parsed = parseNormalizerInput(rawInput);
   if (!parsed.ok) {
-    return failureResult("invalid_input", "invalid_input", parsed.message, version, producedAt);
+    return failureResult("invalid_input", "invalid_input", parsed.message, version, referenceTime);
   }
 
   let value: unknown;
   try {
     value = await provider.normalize(parsed.input, {
-      referenceTime: producedAt,
-      signal: options ? options.signal : undefined,
+      referenceTime,
+      signal,
     });
   } catch {
+    if (signal?.aborted) {
+      return failureResult(
+        "cancelled",
+        "cancelled",
+        "Normalization was cancelled.",
+        version,
+        referenceTime,
+      );
+    }
     // The error object is intentionally discarded: it may contain submitted
     // values, credentials or stack traces.
     return failureResult(
@@ -92,7 +121,17 @@ export async function runNormalization(
       "internal_error",
       "The normalizer did not complete.",
       version,
-      producedAt,
+      referenceTime,
+    );
+  }
+
+  if (signal?.aborted) {
+    return failureResult(
+      "cancelled",
+      "cancelled",
+      "Normalization was cancelled.",
+      version,
+      referenceTime,
     );
   }
 
@@ -103,7 +142,7 @@ export async function runNormalization(
       "invalid_provider_output",
       "The normalizer produced a draft that failed validation.",
       version,
-      producedAt,
+      referenceTime,
     );
   }
 
@@ -114,7 +153,7 @@ export async function runNormalization(
     reviewFlags: draft.reviewFlags,
     error: null,
     normalizerVersion: version,
-    producedAt,
+    referenceTime,
   };
 }
 
@@ -122,7 +161,8 @@ export async function runNormalization(
  * Normalise a submission-shaped object with the deterministic provider.
  *
  * `referenceTime` is normally the submission's `createdAt`. It is echoed in
- * `producedAt`; Phase 1 does not derive dates from it.
+ * the result's `referenceTime`; Phase 1 does not derive dates from it, and it
+ * is not a wall-clock production time.
  */
 export async function normalizeEvent(
   rawInput: unknown,
