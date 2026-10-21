@@ -441,8 +441,8 @@ export function inspectPage(page: SourcePage): Record<string, unknown> {
   };
 }
 
-export async function fetchListing(context: FetchContext): Promise<SourcePage> {
-  const document = await fetchDocument(VISIT_TUMBLER_RIDGE_EVENTS_URL, {
+async function fetchListingFrom(url: string, context: FetchContext): Promise<SourcePage> {
+  const document = await fetchDocument(url, {
     fetch: context.fetch,
     policy: context.policy,
     kind: "html",
@@ -455,11 +455,25 @@ export async function fetchListing(context: FetchContext): Promise<SourcePage> {
   };
 }
 
-export const visitTumblerRidgeSource: IngestionSource = {
-  key: VISIT_TUMBLER_RIDGE_KEY,
-  name: VISIT_TUMBLER_RIDGE_NAME,
-  url: VISIT_TUMBLER_RIDGE_EVENTS_URL,
-  fetchListing,
-  extractCandidates,
-  resolveCandidates,
-};
+/**
+ * Build the adapter for a listing URL.
+ *
+ * The URL is a parameter rather than a constant so a staging mirror, or an
+ * end-to-end test against a local HTTP server, can exercise the real
+ * retrieval path without touching the public site. The source key and name do
+ * not change: an import is always attributed to Visit Tumbler Ridge.
+ */
+export function createVisitTumblerRidgeSource(
+  url: string = VISIT_TUMBLER_RIDGE_EVENTS_URL,
+): IngestionSource {
+  return {
+    key: VISIT_TUMBLER_RIDGE_KEY,
+    name: VISIT_TUMBLER_RIDGE_NAME,
+    url,
+    fetchListing: (context) => fetchListingFrom(url, context),
+    extractCandidates,
+    resolveCandidates,
+  };
+}
+
+export const visitTumblerRidgeSource: IngestionSource = createVisitTumblerRidgeSource();

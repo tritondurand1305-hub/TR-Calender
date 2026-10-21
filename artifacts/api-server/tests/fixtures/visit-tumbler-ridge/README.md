@@ -14,6 +14,8 @@ formats rather than by the site's own markup:
 | `event.ics` | A single-event iCalendar file with a `UID`, `TZID` times, a folded line and escaped text. |
 | `all-day.ics` | An all-day `VALUE=DATE` event. |
 | `recurring.ics` | A recurring event, which the adapter refuses to expand. |
+| `feed.ics` | Two events in one file, which the adapter holds rather than partly importing. |
+| `listing-relative.html` | The same listing with relative `.ics` links, so the end-to-end HTTP test can serve it from a local server. |
 | `malformed.html` | A page with neither links nor structured data. |
 
 The first live run to a network-enabled environment must confirm or refute the

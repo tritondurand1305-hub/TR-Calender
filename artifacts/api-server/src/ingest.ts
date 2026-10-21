@@ -19,11 +19,10 @@
 
 import { failureCode, previewIngestion, runIngestion } from "./ingestion/run.ts";
 import {
-  fetchListing,
+  createVisitTumblerRidgeSource,
   inspectPage,
   VISIT_TUMBLER_RIDGE_EVENTS_URL,
   VISIT_TUMBLER_RIDGE_KEY,
-  visitTumblerRidgeSource,
 } from "./ingestion/visitTumblerRidge.ts";
 import { DEFAULT_FETCH_POLICY, SourceFetchError, type FetchLike } from "./ingestion/http.ts";
 import { SourceParseError } from "./ingestion/types.ts";
@@ -33,12 +32,14 @@ type Mode = "run" | "preview" | "inspect";
 interface Options {
   mode: Mode;
   source: string;
+  sourceUrl: string;
   pretty: boolean;
 }
 
 function parseArguments(argv: string[]): Options {
   let mode: Mode = "run";
   let source = VISIT_TUMBLER_RIDGE_KEY;
+  let sourceUrl = process.env.INGESTION_SOURCE_URL ?? VISIT_TUMBLER_RIDGE_EVENTS_URL;
   let pretty = false;
 
   for (const argument of argv) {
@@ -46,6 +47,7 @@ function parseArguments(argv: string[]): Options {
     else if (argument === "--inspect") mode = "inspect";
     else if (argument === "--pretty") pretty = true;
     else if (argument.startsWith("--source=")) source = argument.slice("--source=".length);
+    else if (argument.startsWith("--source-url=")) sourceUrl = argument.slice("--source-url=".length);
     else if (argument === "--help" || argument === "-h") {
       printUsage();
       process.exit(0);
@@ -54,17 +56,19 @@ function parseArguments(argv: string[]): Options {
     }
   }
 
-  return { mode, source, pretty };
+  return { mode, source, sourceUrl, pretty };
 }
 
 function printUsage(): void {
-  console.log(`Usage: node dist/ingest.mjs [--inspect | --dry-run] [--pretty] [--source=${VISIT_TUMBLER_RIDGE_KEY}]
+  console.log(`Usage: node dist/ingest.mjs [--inspect | --dry-run] [--pretty] [--source=${VISIT_TUMBLER_RIDGE_KEY}] [--source-url=<url>]
 
   (no mode)   run the import and persist results
   --dry-run   fetch and parse, print what would happen, persist nothing
   --inspect   fetch the page and print structure counts only
   --pretty    indent the JSON output
   --source    source key (only ${VISIT_TUMBLER_RIDGE_KEY} is implemented)
+  --source-url override the listing URL (also INGESTION_SOURCE_URL); used for
+               a staging mirror or a local end-to-end check
 
 Exit codes: 0 ok/partial, 1 failed, 2 configuration or usage error.`);
 }
@@ -93,20 +97,21 @@ async function main(): Promise<number> {
 
   const fetchImpl = globalThis.fetch as unknown as FetchLike;
   const policy = { userAgent: process.env.INGESTION_USER_AGENT ?? DEFAULT_FETCH_POLICY.userAgent };
+  const source = createVisitTumblerRidgeSource(options.sourceUrl);
 
   if (options.mode === "inspect") {
-    const page = await fetchListing({
+    const page = await source.fetchListing({
       fetch: fetchImpl,
       policy,
       now: () => new Date(),
     });
-    output({ mode: "inspect", sourceUrl: VISIT_TUMBLER_RIDGE_EVENTS_URL, page: inspectPage(page) }, options.pretty);
+    output({ mode: "inspect", sourceUrl: page.url, page: inspectPage(page) }, options.pretty);
     return 0;
   }
 
   if (options.mode === "preview") {
     const preview = await previewIngestion({
-      source: visitTumblerRidgeSource,
+      source,
       fetch: fetchImpl,
       policy,
       logger: logger(),
@@ -120,7 +125,7 @@ async function main(): Promise<number> {
   // database or any credential.
   const { createDrizzleIngestionStore } = await import("./ingestion/drizzleStore");
   const summary = await runIngestion({
-    source: visitTumblerRidgeSource,
+    source,
     fetch: fetchImpl,
     policy,
     store: createDrizzleIngestionStore(),

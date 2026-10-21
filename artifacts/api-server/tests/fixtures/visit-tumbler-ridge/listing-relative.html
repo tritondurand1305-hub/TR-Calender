@@ -1,0 +1,65 @@
+<!doctype html>
+<!--
+  SYNTHETIC FIXTURE — not a capture of visittumblerridge.ca.
+  Same content as listing.html, but the .ics links are relative so the
+  end-to-end HTTP test can serve it from a local server. See README.md.
+-->
+<html lang="en-CA">
+  <head>
+    <meta charset="utf-8" />
+    <title>Events — Visit Tumbler Ridge (fixture)</title>
+    <link rel="alternate" type="text/calendar" title="Events feed" href="/events/all.ics" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Event",
+            "name": "Seniors' Tea & Social",
+            "description": "Tea, coffee & conversation for seniors and neighbours.",
+            "startDate": "2026-01-15T19:00:00-08:00",
+            "endDate": "2026-01-15T21:00:00-08:00",
+            "location": { "@type": "Place", "name": "Tumbler Ridge Community Centre" },
+            "url": "https://www.visittumblerridge.ca/events/seniors-tea"
+          },
+          {
+            "@type": "Event",
+            "name": "Library Closed — Staff Training",
+            "description": "The library is closed for staff training.",
+            "startDate": "2026-01-22",
+            "location": "Tumbler Ridge Public Library",
+            "url": "https://www.visittumblerridge.ca/events/library-closed"
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <h1>What's happening</h1>
+    <main>
+      <article class="card">
+        <h2><a href="/events/seniors-tea">Seniors' Tea &amp; Social</a></h2>
+        <p>January 15, 2026 · 7:00 pm</p>
+        <p>Tumbler Ridge Community Centre</p>
+        <a href="https://calendar.google.com/calendar/render?action=TEMPLATE&amp;text=Seniors%27%20Tea%20%26%20Social&amp;dates=20260115T190000/20260115T210000&amp;ctz=America%2FVancouver&amp;location=Tumbler%20Ridge%20Community%20Centre&amp;details=Tea%2C%20coffee%20%26%20conversation%20for%20seniors%20and%20neighbours.">Add to Google Calendar</a>
+      </article>
+
+      <article class="card">
+        <h2><a href="/events/winter-storytime">Winter Storytime</a></h2>
+        <p>January 20, 2026 · 10:30 am</p>
+        <a href="/events/winter-storytime.ics">Add to calendar (ICS)</a>
+      </article>
+
+      <article class="card">
+        <h2>Council Open House</h2>
+        <p>February 3, 2026 · 6:00 pm</p>
+        <a href="https://calendar.google.com/calendar/render?action=TEMPLATE&amp;text=Council+Open+House&amp;dates=20260203T180000Z/20260203T200000Z&amp;location=Council+Chambers">Add to Google Calendar</a>
+      </article>
+
+      <article class="card">
+        <h2>Subscribe</h2>
+        <a href="/events/all.ics">Download the whole calendar</a>
+      </article>
+    </main>
+  </body>
+</html>

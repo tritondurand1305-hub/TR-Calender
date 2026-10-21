@@ -135,6 +135,12 @@ pnpm --filter @workspace/api-server run ingest
   stderr.
 - One run is bounded: 15 s per request, 2 MB per document, 120 candidates,
   40 `.ics` fetches, 4 concurrent requests.
+- `--source-url=<url>` (or `INGESTION_SOURCE_URL`) points the adapter at another
+  listing URL — a staging mirror, or a local server for an end-to-end check.
+  The source key and name do not change.
+- `INGESTION_USER_AGENT` overrides the default `TRCalendarBot/1.0` user agent.
+  Set it to the operator's contact page before the first production run; the
+  value is sent to the source on every request and no URL is invented in code.
 
 ## 6. Database
 
@@ -192,7 +198,7 @@ second run reports `unchanged` for every item.
 
 ## 8. What the tests prove, and what they do not
 
-`node --test tests/*.test.ts` covers 121 cases, of which 60 are ingestion:
+`node --test tests/*.test.ts` covers 124 cases, of which 63 are ingestion:
 
 - parsing of representative listings, including entities, all-day values,
   timezone conversion, folded iCalendar lines and escaped text;
@@ -202,11 +208,20 @@ second run reports `unchanged` for every item.
 - invalid and missing identifiers;
 - fetch failure, HTTP failure, parsing failure and per-item `.ics` failure,
   including that previously imported events are untouched;
-- protection of administrator-owned fields and of the publication decision.
+- protection of administrator-owned fields and of the publication decision;
+- retrieval over real HTTP against a local `node:http` server serving the same
+  fixtures, including a redirect, the `.ics` fetches and an HTTP failure.
 
 They do **not** prove that the real page parses, that a real database write
 succeeds, or that the scheduler is configured. Those are exactly the steps in
 section 7.
+
+**What was actually executed in this sandbox:** the built CLI was run as
+`node dist/ingest.mjs --dry-run --source-url=http://127.0.0.1:8123/events`
+against a local `node:http` server serving `listing-relative.html`. It followed
+the redirect, resolved one per-event `.ics` file, held the multi-event file and
+printed `discovered 5 / ready 4 / held 1` with the expected Vancouver times.
+Nothing was written to a database, and no request reached the public internet.
 
 ## 9. Next source
 

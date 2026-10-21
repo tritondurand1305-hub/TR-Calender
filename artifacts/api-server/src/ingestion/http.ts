@@ -36,8 +36,10 @@ export interface FetchPolicy {
 }
 
 export const DEFAULT_FETCH_POLICY: FetchPolicy = {
-  userAgent:
-    "TRCalendarBot/1.0 (+https://www.tumblridgecalendar.ca; community calendar import)",
+  // No URL is invented here: the deployed site's own address is not known in
+  // this repository. Replace the parenthetical with the operator's contact
+  // page before scheduling a production run.
+  userAgent: "TRCalendarBot/1.0 (community calendar importer)",
   timeoutMs: 15_000,
   maxBytes: 2_000_000,
 };
