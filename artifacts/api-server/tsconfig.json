@@ -1,7 +1,9 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "allowImportingTsExtensions": true,
     "incremental": true,
+    "noEmit": true,
     "tsBuildInfoFile": ".tsbuildinfo",
     "outDir": "dist",
     "rootDir": "src",
