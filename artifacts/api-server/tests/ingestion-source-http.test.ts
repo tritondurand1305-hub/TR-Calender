@@ -79,7 +79,11 @@ after(async () => {
 describe("real HTTP retrieval against a local server", () => {
   it("follows a redirect, fetches the per-event ICS files and previews the import", async () => {
     const source = createVisitTumblerRidgeSource(`${baseUrl}/events`);
-    const preview = await previewIngestion({ source, fetch: globalThis.fetch });
+    const preview = await previewIngestion({
+      source,
+      fetch: globalThis.fetch,
+      now: () => new Date("2026-01-10T12:00:00Z"),
+    });
 
     assert.equal(preview.pageUrl, `${baseUrl}/events.html`, "the redirect should be followed");
     assert.deepEqual(preview.counts, { discovered: 5, ready: 4, held: 1 });

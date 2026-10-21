@@ -364,12 +364,13 @@ export async function resolveCandidates(
   candidates: RawCandidate[],
   context: FetchContext,
 ): Promise<ResolvedListing[]> {
+  const referenceTime = context.now();
   const icsCandidates = candidates.filter((candidate) => candidate.kind === "ics" && !candidate.problem);
   const allowed = new Set(
     icsCandidates.slice(0, MAX_ICS_FETCHES).map((candidate) => candidate.externalId),
   );
 
-  return mapWithConcurrency(candidates, ICS_CONCURRENCY, async (candidate) => {
+  const listings = await mapWithConcurrency(candidates, ICS_CONCURRENCY, async (candidate) => {
     if (candidate.problem) {
       return {
         externalId: candidate.externalId,
@@ -416,6 +417,18 @@ export async function resolveCandidates(
       } satisfies ResolvedListing;
     }
     return resolveIcs(candidate, context);
+  });
+
+  return listings.map((listing) => {
+    if (
+      listing.problem ||
+      !listing.endAt ||
+      Number.isNaN(listing.endAt.getTime()) ||
+      listing.endAt.getTime() > referenceTime.getTime()
+    ) {
+      return listing;
+    }
+    return { ...listing, problem: "visit_tumbler_ridge_event_ended" };
   });
 }
 

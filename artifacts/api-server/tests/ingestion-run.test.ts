@@ -170,6 +170,24 @@ function makeFetch(routes: Routes): FetchLike {
   };
 }
 
+function googleCalendarLink(title: string, dates: string): string {
+  const params = new URLSearchParams({
+    action: "TEMPLATE",
+    text: title,
+    dates,
+    ctz: "America/Vancouver",
+  });
+  return `<a href="https://calendar.google.com/calendar/render?${params}">${title}</a>`;
+}
+
+async function previewPage(page: string, referenceTime: string) {
+  return previewIngestion({
+    source: visitTumblerRidgeSource,
+    fetch: makeFetch({ page }),
+    now: () => new Date(referenceTime),
+  });
+}
+
 async function defaultRoutes(overrides: Routes = {}): Promise<Routes> {
   return {
     page: overrides.page ?? (await fixture("listing.html")),
@@ -245,10 +263,45 @@ describe("first import", () => {
     const preview = await previewIngestion({
       source: visitTumblerRidgeSource,
       fetch: makeFetch(await defaultRoutes()),
+      now: () => new Date("2026-01-02T12:00:00.000Z"),
     });
     assert.deepEqual(preview.counts, { discovered: 5, ready: 4, held: 1 });
     assert.equal(preview.pageUrl, VISIT_TUMBLER_RIDGE_EVENTS_URL);
     assert.ok(preview.items.some((item) => item.outcome === "ready" && item.title === "Council Open House"));
+  });
+
+  it("holds ended events while accepting future and underway events", async () => {
+    const preview = await previewPage(
+      `<html><body>
+        ${googleCalendarLink("Historical", "20261021T090000/20261021T100000")}
+        ${googleCalendarLink("Future", "20261021T120000/20261021T130000")}
+        ${googleCalendarLink("Underway", "20261021T100000/20261021T120000")}
+        ${googleCalendarLink("Ended at reference", "20261021T100000/20261021T110000")}
+      </body></html>`,
+      "2026-10-21T18:00:00.000Z",
+    );
+
+    assert.deepEqual(preview.counts, { discovered: 4, ready: 2, held: 2 });
+    assert.deepEqual(
+      Object.fromEntries(preview.items.map((item) => [item.title, [item.outcome, item.reason]])),
+      {
+        Historical: ["held", "visit_tumbler_ridge_event_ended"],
+        Future: ["ready", null],
+        Underway: ["ready", null],
+        "Ended at reference": ["held", "visit_tumbler_ridge_event_ended"],
+      },
+    );
+  });
+
+  it("honors an all-day exclusive end across the Vancouver-to-UTC date boundary", async () => {
+    const page = `<html><body>${googleCalendarLink("All-day event", "20261020/20261021")}</body></html>`;
+    const beforeExclusiveEnd = await previewPage(page, "2026-10-21T06:59:59.000Z");
+    const atExclusiveEnd = await previewPage(page, "2026-10-21T07:00:00.000Z");
+
+    assert.equal(beforeExclusiveEnd.items[0]?.startAt, "2026-10-20T07:00:00.000Z");
+    assert.equal(beforeExclusiveEnd.items[0]?.outcome, "ready");
+    assert.equal(atExclusiveEnd.items[0]?.outcome, "held");
+    assert.equal(atExclusiveEnd.items[0]?.reason, "visit_tumbler_ridge_event_ended");
   });
 });
 
